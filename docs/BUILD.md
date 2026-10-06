@@ -48,15 +48,17 @@ chmod +x build.sh run.sh tools/regen.sh
 
 `--mouse-aim` and `--vertical-look` are also available.
 
-## Source-build limitation
+## Generated game code
 
-The tested private first-level build includes captured game overlay code.
-That retail-derived code is excluded from this source repository. A fresh
-checkout is not yet equivalent to the validated private gameplay package.
+The build scripts generate the translated resident game code locally from your
+verified executable. That retail-derived code is excluded from this source
+repository. The Windows alpha reads game assets and runtime-loaded code from
+the player's disc; it does not require loose game executables or captured files.
 
-If a private regeneration has produced `generated/overlays_static.c`, CMake
-detects and links it automatically. Keep it, generated game translations, disc
-files, captures, and resulting binaries outside Git.
+If a private regeneration produces `generated/overlays_static.c`, CMake can
+also link that optional static overlay. The current alpha does not use it.
+Keep generated game translations, disc files, captures, and binaries outside
+Git; publish runtime binaries as release assets rather than source commits.
 
 ## Incremental build and tests
 

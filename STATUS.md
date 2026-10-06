@@ -14,13 +14,14 @@ and public-release validation are incomplete.
 | Ultrawide corruption | Fixed primitive-buffer overflow. The user's 8x / 32:9 training retest stayed correct through 8,934 frames and closed normally. |
 | Save states | Expanded rendering buffers survive saving and loading in a fresh process; the training-level restart check passed. |
 | Automated checks | Windows Release build and all 25 root CTests passed. |
+| Player package | Windows x64 alpha includes the launcher, OpenBIOS, and setup guide. A clean extracted package reached the first mission using only a BIN/CUE; the production launcher also loaded a gameplay save state. |
 
 ## Remaining limits
 
 - Full campaign, later levels, and broad memory-card regression coverage remain
   unverified.
-- The validated private build uses captured game overlay code that is excluded
-  from Git. A fresh source checkout does not reproduce that package yet.
+- The source build requires local generation from the verified game executable.
+  Prebuilt release users only need their supported BIN/CUE disc image.
 - The retail game produces about 30 unique world/camera frames per second while
   host presentation runs at about 60 Hz. Higher render resolution does not
   increase that game cadence.

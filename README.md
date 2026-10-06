@@ -23,6 +23,14 @@ disc revision; the redistributable OpenBIOS backend is used for booting.
 
 Frame interpolation is currently disabled.
 
+## Play the Windows alpha
+
+[Download v0.1.0-alpha.1](https://github.com/micmea668/DisruptorRecomp/releases/tag/v0.1.0-alpha.1),
+extract the Windows ZIP, add your supported USA BIN/CUE to its `input/` folder,
+and double-click **Play Disruptor.cmd**. OpenBIOS is included; no build tools are
+needed. See the [getting-started guide](docs/PLAYING.md) for prerequisites,
+controls, saves, and troubleshooting.
+
 ## Build and run
 
 Install Git, Python 3, CMake 3.20+, and a Windows x64 C++ toolchain. Visual Studio
@@ -47,10 +55,8 @@ To enable modern controls, widescreen, and texture/geometry correction at launch
 .\run.ps1 -ModernControls -Widescreen -GeometryCorrection -PerspectiveTextures
 ```
 
-The validated private gameplay build also uses captured overlay code that is
-excluded from this repository. A fresh source build is not yet equivalent to
-that package. See [build details](docs/BUILD.md) for this limitation, Linux
-instructions, and test commands.
+See [build details](docs/BUILD.md) for Linux instructions, generated-code
+requirements, and test commands.
 
 ## Controls and settings
 
