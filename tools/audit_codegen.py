@@ -189,6 +189,14 @@ FAR_RENDERING_SITES = {
     0x8004279C: 0x8FBF016C,
 }
 
+BACKDROP_TILE_SITES = {
+    0x8003B328: 0x8FB80040,
+    0x8003B338: 0x00621821,
+    0x8003B348: 0x8FB80028,
+    0x8003B5A8: 0x8F8205B8,
+    0x8003B638: 0x8FB80040,
+}
+
 BILLBOARD_ASPECT_SITES = {
     0x8003BB88: 0xA6030016,
     0x8003BFB0: 0xA6030016,
@@ -492,6 +500,24 @@ def main() -> int:
             + str(BILLBOARD_ASPECT_SITES)
             + ", found "
             + str(generated_billboard_aspect_sites)
+        )
+
+    backdrop_tile_matches = re.findall(
+        r"disruptor_backdrop_tiles_instruction_hook\(cpu, "
+        r"0x([0-9A-F]{8})u, 0x([0-9A-F]{8})u, 1\)",
+        shard_text,
+    )
+    generated_backdrop_tile_sites = {
+        int(address, 16): int(word, 16)
+        for address, word in backdrop_tile_matches
+    }
+    if (generated_backdrop_tile_sites != BACKDROP_TILE_SITES or
+            len(backdrop_tile_matches) != len(BACKDROP_TILE_SITES)):
+        failures.append(
+            "reviewed backdrop-tile hooks differ: expected "
+            + str(BACKDROP_TILE_SITES)
+            + ", found "
+            + str(generated_backdrop_tile_sites)
         )
 
     precision_mfc2_matches = re.findall(

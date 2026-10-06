@@ -18,6 +18,7 @@ option(DISRUPTOR_DEV_MENU
     ON)
 
 set(DISRUPTOR_EXTRA_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_backdrop_tiles.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_billboard_aspect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_cheats.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_control_probe.cpp"
@@ -109,6 +110,7 @@ target_compile_definitions(psx-runtime PRIVATE
     # Keep the experimental sources available, but compile out frame blending,
     # temporal capture and the high-refresh presenter for this title for now.
     PSX_DISABLE_FRAME_INTERPOLATION=1
+    PSX_HAS_DISRUPTOR_BACKDROP_TILES=1
     PSX_HAS_DISRUPTOR_BILLBOARD_ASPECT=1
     PSX_HAS_DISRUPTOR_FAR_RENDERING=1
     PSX_HAS_DISRUPTOR_VERTICAL_CAMERA=1)
@@ -132,6 +134,10 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    add_test(NAME disruptor_backdrop_tiles_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backdrop_tiles_contract.py")
 
     add_test(NAME disruptor_geometry_provenance_contract
         COMMAND "${Python3_EXECUTABLE}" -B
@@ -219,6 +225,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         "${PSXRECOMP_ROOT}/runtime/include")
     target_compile_features(disruptor-render-arena-test PRIVATE cxx_std_17)
     add_test(NAME disruptor_render_arena COMMAND disruptor-render-arena-test)
+
+    add_executable(disruptor-backdrop-tiles-test
+        tests/disruptor_backdrop_tiles_test.cpp)
+    target_include_directories(disruptor-backdrop-tiles-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-backdrop-tiles-test PRIVATE cxx_std_17)
+    add_test(NAME disruptor_backdrop_tiles
+        COMMAND disruptor-backdrop-tiles-test)
 
     add_executable(disruptor-billboard-aspect-test
         tests/disruptor_billboard_aspect_test.cpp)

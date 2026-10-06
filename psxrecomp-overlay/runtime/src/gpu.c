@@ -25,6 +25,7 @@
 #include "mod_runtime.h"
 #include "ws_cull_detect.h"
 #include "ws_aspect_cone_math.h"
+#include "gpu_ws_screen_tile.h"
 #include "gpu_ws_tag_match.h"
 #include "ws_ui_group.h"
 #include <math.h>
@@ -1740,6 +1741,35 @@ void gpu_ws_tag_primitive(CPUState *cpu, uint32_t primitive_addr,
         words[i] = cpu->read_word(primitive_addr + 4u + (uint32_t)i * 4u);
     ws_tag_primitive(primitive_addr, anchor_x,
                      psx_ws_ft4_signature_words(words), 1);
+}
+
+/* Backdrop tiles tile the frame exactly, so squashing each one around a HUD
+ * pivot pulls them apart and exposes the clear colour between them. */
+static PsxWsScreenTiles ws_screen_tiles;
+
+void gpu_ws_tag_screen_tile(CPUState *cpu, uint32_t primitive_addr) {
+    if (!ws_active() || !cpu || !cpu->read_word) return;
+    uint32_t words[PSX_WS_SCREEN_TILE_WORDS];
+    for (uint32_t i = 0; i < PSX_WS_SCREEN_TILE_WORDS; i++)
+        words[i] = cpu->read_word(primitive_addr + 4u + i * 4u);
+    psx_ws_screen_tile_mark(&ws_screen_tiles,
+                            psx_mod_gpu_dma_resolve_address(primitive_addr),
+                            words, (uint32_t)s_frame_count);
+}
+
+int32_t gpu_ws_widen_x(int32_t x, int round_up) {
+    if (!ws_active()) return x;
+    return psx_ws_widen_about(x, ws_disp_w() / 2, ws_xnum, ws_xden, round_up);
+}
+
+/* A two-frame window was tried instead of one-shot marks and lost them on
+ * 4-VBlank frames. */
+static int ws_screen_tile_take(void) {
+    if (gp0_cmd_source_addr == 0xFFFFFFFFu) return 0;
+    return psx_ws_screen_tile_take(
+        &ws_screen_tiles,
+        psx_mod_gpu_dma_resolve_address(gp0_cmd_source_addr - 4u),
+        gp0_cmd_buf, (uint32_t)s_frame_count);
 }
 
 /* Called from generated code at the entry of each [widescreen]
@@ -4182,7 +4212,15 @@ static void gp0_exec_textured_rect(void) {
     int ws_w = 0;
     if (ws_active() && w > 0) {
         int32_t ws_ax;
-        if (ws_tagged_anchor(&ws_ax)) {
+        if (ws_screen_tile_take()) {
+            /* Both edges go through one mapping, so neighbours keep touching. */
+            const int32_t centre = ws_disp_w() / 2;
+            const int32_t right =
+                psx_ws_squash_about(x0 + w, centre, ws_xnum, ws_xden);
+            x0 = psx_ws_squash_about(x0, centre, ws_xnum, ws_xden);
+            if (right <= x0) return;
+            ws_w = (int)(right - x0);
+        } else if (ws_tagged_anchor(&ws_ax)) {
             x0 = ws_scale_about(x0, ws_ax);
             ws_w = (int)ws_scale_len(w);
         } else {

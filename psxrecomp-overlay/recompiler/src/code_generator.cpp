@@ -254,6 +254,31 @@ static const DisruptorBillboardAspectSite *disruptor_billboard_aspect_site(
     return nullptr;
 }
 
+/* Disruptor's sky backdrop routine lays SPRT tiles over the opening it has
+ * already clamped to the 320-pixel frame.  These four seams hand the host the
+ * left edge, the panorama scroll and the right edge before the tile loop reads
+ * them, so classic widescreen can ask for the columns a wider view needs. */
+struct DisruptorBackdropTileSite {
+    uint32_t pc;
+    uint32_t instruction;
+};
+
+static const DisruptorBackdropTileSite kDisruptorBackdropTileSites[] = {
+    {0x8003B328u, 0x8FB80040u},
+    {0x8003B338u, 0x00621821u},
+    {0x8003B348u, 0x8FB80028u},
+    {0x8003B5A8u, 0x8F8205B8u},
+    {0x8003B638u, 0x8FB80040u},
+};
+
+static const DisruptorBackdropTileSite *disruptor_backdrop_tile_site(
+        uint32_t address) {
+    for (const DisruptorBackdropTileSite &site : kDisruptorBackdropTileSites) {
+        if (site.pc == address) return &site;
+    }
+    return nullptr;
+}
+
 static bool codegen_cycle_per_insn() {
     // DEFAULT ON for the faithful-timing (cycle-audit) branch: each instruction
     // charges its cost at its own site, so the running cycle count is correct
@@ -1086,6 +1111,18 @@ std::string CodeGenerator::translate_instruction(uint32_t addr, uint32_t instr) 
                 addr, billboard_aspect_site->instruction, instr));
         }
         billboard_aspect_site = nullptr;
+    }
+
+    const DisruptorBackdropTileSite *backdrop_tile_site =
+        disruptor_backdrop_tile_site(addr);
+    if (backdrop_tile_site && instr != backdrop_tile_site->instruction) {
+        if (!config_.overlay_mode) {
+            throw std::runtime_error(fmt::format(
+                "Disruptor backdrop-tile site 0x{:08X} expected word "
+                "0x{:08X}, found 0x{:08X}",
+                addr, backdrop_tile_site->instruction, instr));
+        }
+        backdrop_tile_site = nullptr;
     }
 
     // Full-word-guarded terrain-frustum half-angle constants. Scaling the
@@ -2158,6 +2195,12 @@ std::string CodeGenerator::translate_instruction(uint32_t addr, uint32_t instr) 
     if (billboard_aspect_site) {
         code += fmt::format(
             "\n{}disruptor_billboard_aspect_instruction_hook(cpu, "
+            "0x{:08X}u, 0x{:08X}u, 1);",
+            config_.indent, addr, instr);
+    }
+    if (backdrop_tile_site) {
+        code += fmt::format(
+            "\n{}disruptor_backdrop_tiles_instruction_hook(cpu, "
             "0x{:08X}u, 0x{:08X}u, 1);",
             config_.indent, addr, instr);
     }
@@ -3557,6 +3600,7 @@ void CodeGenerator::emit_runtime_externs(std::ostream& ss) const {
     ss << "extern void disruptor_vertical_camera_instruction_hook(CPUState* cpu, uint32_t address, uint32_t instruction, int phase);  /* version-pinned vertical-camera seam */\n";
     ss << "extern void disruptor_far_rendering_instruction_hook(CPUState* cpu, uint32_t address, uint32_t instruction, int phase);  /* version-pinned far-rendering seam */\n";
     ss << "extern void disruptor_billboard_aspect_instruction_hook(CPUState* cpu, uint32_t address, uint32_t instruction, int phase);  /* version-pinned world-billboard seam */\n";
+    ss << "extern void disruptor_backdrop_tiles_instruction_hook(CPUState* cpu, uint32_t address, uint32_t instruction, int phase);  /* version-pinned backdrop-tile seam */\n";
     ss << "extern void psx_datashard_ret(CPUState* cpu);                  /* data-shard capture finalize */\n";
     ss << "extern int  psx_vsync_query_hle_enter(CPUState* cpu, uint32_t func, uint32_t counter_addr, uint32_t gpustat_ptr_addr, uint32_t timer1_ptr_addr, uint32_t timer1_cache_addr);  /* load_accel.c */\n";
     ss << "extern void psx_ws_sprite_tag(CPUState* cpu);  /* widescreen prim tag (gpu.c) */\n";
