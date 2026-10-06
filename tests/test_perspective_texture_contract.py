@@ -256,10 +256,10 @@ def main() -> int:
     require(dispatch.count("g_b->set_perspective_triangle") >= 2,
             "the optional perspective callback must be null-checked")
 
-    # GL carries one normalized reciprocal depth per vertex. Location 11 is the
-    # only new VAO attribute and offset 22 matches the 23-float CPU record.
-    require("#define TEXV 23" in gl,
-            "textured GL vertices must include one q component")
+    # Shader q keeps its location and offset. The appended temporal camera
+    # depth is CPU metadata, so expanding the record must not shift attributes.
+    require("#define TEXV 24" in gl,
+            "textured GL vertices must retain independent q and temporal depth")
     tex_vs = source_span(gl, "static const char *TEX_VS", "static const char *TEX_FS")
     tex_fs = source_span(gl, "static const char *TEX_FS", "static const char *BLIT_VS")
     require("layout(location=11) in float a_q" in tex_vs,
@@ -277,6 +277,30 @@ def main() -> int:
     gl_set = function_body(gl, "glb_set_perspective_triangle")
     require("sw_set_perspective_triangle" not in gl_set,
             "pre-context GL q must not fall through to canonical software VRAM")
+
+    # A polygon-normalized shader q cannot identify equal physical depths on
+    # adjacent polygons. Temporal identity receives the original GTE depth,
+    # including while perspective textures are disabled, and consumes it once.
+    temporal_route = function_body(render, "gr_set_temporal_depth_triangle")
+    require(temporal_route.count("g_b->set_temporal_depth_triangle") >= 2 and
+            re.search(r"\.set_temporal_depth_triangle\s*=\s*NULL", sw_backend),
+            "temporal metadata must remain an optional presentation callback")
+    precise = function_body(gpu, "resolve_precise_vertices")
+    queue_precise = function_body(gpu, "queue_precise_triangle")
+    require("s_precise_vertex_depth[i] = z[i]" in precise and
+            "gr_set_temporal_depth_triangle(1," in queue_precise and
+            "s_texture_correction_enabled" not in queue_precise,
+            "temporal depth must use exact GTE depth independently of texture correction")
+    consume = function_body(gl, "take_visual_triangle")
+    require("exact && s_next_temporal_depth" in consume and
+            "s_next_temporal_depth = 0" in consume,
+            "temporal depth must require exact provenance and be consumed once")
+    for name in ("gpu_flat_rect", "gpu_textured_rect", "gpu_geometry",
+                 "glb_set_geometry_correction"):
+        require("s_next_temporal_depth = 0" in function_body(gl, name),
+                f"{name} must clear unused temporal depth before UI or rejection fallback")
+    require("layout(location=12)" not in tex_vs,
+            "temporal camera depth must not become a shader attribute")
 
     # Canonical drawing still uses affine v_uv. Only the independent visual
     # pass, and only an exact polygon with valid q, may select uv*q/q.

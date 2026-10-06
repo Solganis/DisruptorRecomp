@@ -19,6 +19,7 @@
 #include "cpu_state.h"
 #include "gpu.h"
 #include "lockstep.h"
+#include "mod_memory.h"
 
 #include <algorithm>
 #include <array>
@@ -72,7 +73,10 @@ uint32_t billboard_packet_site_bit(const BillboardPacketSite *site) {
 }
 
 bool valid_main_ram_packet(uint32_t packet) {
-    return packet >= kRamFirst && packet <= kRamLast - kPacketLastByte;
+    return (packet >= kRamFirst && packet <= kRamLast - kPacketLastByte) ||
+           (packet >= PSX_MOD_GPU_DMA_GUEST_BASE &&
+            packet <= PSX_MOD_GPU_DMA_GUEST_BASE +
+                      PSX_MOD_GPU_DMA_APERTURE_SIZE - 1u - kPacketLastByte);
 }
 
 int32_t signed_x(CPUState *cpu, uint32_t address) {

@@ -19,6 +19,7 @@
 #include "cpu_state.h"
 #include "lockstep.h"
 #include "mod_plugins.h"
+#include "mod_memory.h"
 #include "psx_netplay.h"
 
 #include <algorithm>
@@ -250,6 +251,14 @@ bool comparator_active() {
 bool valid_main_ram_pointer(uint32_t pointer, uint32_t trailing_bytes) {
     return pointer >= kRamFirst && pointer <= kRamLast &&
            trailing_bytes <= kRamLast - pointer;
+}
+
+bool valid_primitive_pointer(uint32_t pointer, uint32_t trailing_bytes) {
+    if (valid_main_ram_pointer(pointer, trailing_bytes)) return true;
+    const uint32_t last = PSX_MOD_GPU_DMA_GUEST_BASE +
+                          PSX_MOD_GPU_DMA_APERTURE_SIZE - 1u;
+    return pointer >= PSX_MOD_GPU_DMA_GUEST_BASE && pointer <= last &&
+           trailing_bytes <= last - pointer;
 }
 
 bool plausible_live_gameplay() {
@@ -560,7 +569,7 @@ void observe_object_decision(const CPUState *cpu,
 bool read_primitive_boundary(uint32_t *out) {
     if (!out) return false;
     *out = psx_mod_read_word(kPrimitivePointer);
-    if (valid_main_ram_pointer(*out, 0u)) return true;
+    if (valid_primitive_pointer(*out, 0u)) return true;
     ++g_diagnostics.invalid_globals;
     return false;
 }
@@ -630,8 +639,8 @@ bool sample_primitive_end(uint32_t *sampled_end) {
     g_diagnostics.primitive_end = end;
     g_diagnostics.primitive_last_delta = 0u;
 
-    if (!valid_main_ram_pointer(g_frame.primitive_start, 0u) ||
-        !valid_main_ram_pointer(end, 0u) || end < g_frame.primitive_start) {
+    if (!valid_primitive_pointer(g_frame.primitive_start, 0u) ||
+        !valid_primitive_pointer(end, 0u) || end < g_frame.primitive_start) {
         ++g_diagnostics.invalid_globals;
         return false;
     }
@@ -1158,7 +1167,7 @@ extern "C" void disruptor_far_rendering_renderer_entry(
     }
     const uint32_t primitive_start = psx_mod_read_word(
         renderer_context + kRendererPrimitiveStartOffset);
-    if (!valid_main_ram_pointer(primitive_start, 0u)) {
+    if (!valid_primitive_pointer(primitive_start, 0u)) {
         ++g_diagnostics.invalid_globals;
         ++g_diagnostics.rejected_entries;
         return;

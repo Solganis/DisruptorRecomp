@@ -123,7 +123,7 @@
 
 #define VRAM_W 1024
 #define VRAM_H 512
-#define GL_MAX_INTERNAL_SCALE 4
+#define GL_MAX_INTERNAL_SCALE SW_MAX_INTERNAL_SCALE
 
 /* ---- Loaded modern-GL entry points ------------------------------------- */
 typedef GLuint (APIENTRY *PFN_glCreateShader)(GLenum);
@@ -276,9 +276,11 @@ static int load_modern_gl(void) {
     LOAD(p_glVertexAttribPointer, "glVertexAttribPointer");
     LOAD(p_glEnableVertexAttribArray, "glEnableVertexAttribArray");
     LOAD(p_glBindFragDataLocationIndexed, "glBindFragDataLocationIndexed");
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
     LOAD(p_glFenceSync, "glFenceSync");
     LOAD(p_glWaitSync, "glWaitSync");
     LOAD(p_glDeleteSync, "glDeleteSync");
+#endif
     LOAD(p_glGenFramebuffers, "glGenFramebuffers"); LOAD(p_glBindFramebuffer, "glBindFramebuffer");
     LOAD(p_glDeleteFramebuffers, "glDeleteFramebuffers");
     LOAD(p_glFramebufferTexture2D, "glFramebufferTexture2D");
@@ -315,6 +317,7 @@ static GLuint        s_present_tex = 0;    /* CPU-readout present path (24bpp) *
 static int           s_present_w = 0, s_present_h = 0;
 static GLuint        s_present_prog = 0, s_present_vao = 0;
 static GLint         s_present_uTex = -1, s_present_uUvRect = -1;
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
 static GLuint        s_interp_prog = 0, s_interp_tex[3];
 static GLsync        s_interp_fence[3];
 static GLsync        s_interp_draw_fence = NULL;
@@ -327,7 +330,7 @@ static int           s_interp_content_suspended = 0;
 static int           s_interp_host_ui_suspended = 0;
 static int           s_interp_blend_mode = 0;
 static int           s_interp_prev = 0, s_interp_cur = 0;
-static int           s_interp_w = 0, s_interp_h = 0, s_interp_linear = 0;
+static int           s_interp_w = 0, s_interp_h = 0, s_interp_linear = 0, s_interp_scale = 1;
 static int           s_interp_force_4_3 = 0, s_interp_source_path = -1;
 static uint64_t      s_interp_start = 0, s_interp_duration = 1;
 static uint64_t      s_interp_last_capture = 0, s_interp_swaps = 0;
@@ -345,6 +348,24 @@ static void interp_reset_history(void);
 static int interp_thread_main(void *opaque);
 static int interp_present(void);
 static void interp_draw_quad(float alpha, int lx, int ly, int lw, int lh);
+static uint64_t s_temporal_raw_generation = 1;
+static void temporal_reset(void);
+static void temporal_release(void);
+static void temporal_begin(GLuint fbo, int y, int h, uint16_t color);
+static void temporal_invalidate_surface(GLuint fbo);
+static void temporal_draw(const float *vertices, int n, int textured,
+                          GLenum mode, int semi, int mask, int filter,
+                          const int *twin, int gate, int direct);
+#define temporal_note_raw_change() (++s_temporal_raw_generation)
+#else
+#define s_interp_enabled 0
+#define interp_reset_history() ((void)0)
+#define temporal_note_raw_change() ((void)0)
+#define temporal_begin(...) ((void)0)
+#define temporal_invalidate_surface(...) ((void)0)
+#define temporal_draw(...) ((void)0)
+#define interp_capture(...) 0
+#endif
 
 static int           s_raster_ok = 0;      /* full GPU pipeline available */
 
@@ -359,6 +380,8 @@ static int           s_next_precise = 0;
 static int32_t       s_next_x16[3], s_next_y16[3];
 static int           s_next_perspective = 0;
 static float         s_next_q[3] = { 0.0f, 0.0f, 0.0f };
+static int           s_next_temporal_depth = 0;
+static float         s_next_z[3] = { 0.0f, 0.0f, 0.0f };
 static float         s_yaw_sin = 0.0f, s_yaw_cos = 1.0f;
 static float         s_yaw_center_x = 160.0f;
 static float         s_yaw_center_y_relative = 120.0f;
@@ -380,8 +403,8 @@ static GLuint s_geo_prog = 0, s_geo_vao = 0, s_geo_vbo = 0;
 static GLuint s_tex_prog = 0, s_tex_vao = 0, s_tex_vbo = 0;
 /* Vertex formats retain both canonical GP0 and presentation-only positions.
  * Per-primitive texture state stays in flat attributes so prims can batch. */
-#define GEOV 9
-#define TEXV 23
+#define GEOV 10
+#define TEXV 24
 static GLuint s_blit_prog = 0, s_blit_vao = 0, s_blit_vbo = 0;
 static GLuint s_pack_prog = 0, s_stencil_prog = 0, s_empty_vao = 0;
 
@@ -545,7 +568,8 @@ static void geometry_visual_uniforms(GLint visual, GLint camera, GLint options,
  * presentation mirror when the shader's u_visual switch is set. The returned
  * flags are bit 0 = world and bit 1 = exact precise provenance. */
 static int take_visual_triangle(const int *xs, const int *ys,
-                                 float px[3], float py[3], float pq[3]) {
+                                 float px[3], float py[3], float pq[3],
+                                 float pz[3]) {
     const int world = s_geometry_correction && s_next_world;
     const int exact = world && s_next_precise;
     const int perspective = exact && s_next_perspective;
@@ -558,10 +582,12 @@ static int take_visual_triangle(const int *xs, const int *ys,
             py[i] = (float)ys[i];
         }
         if (pq) pq[i] = perspective ? s_next_q[i] : 0.0f;
+        if (pz) pz[i] = exact && s_next_temporal_depth ? s_next_z[i] : 0.0f;
     }
     s_next_world = 0;
     s_next_precise = 0;
     s_next_perspective = 0;
+    s_next_temporal_depth = 0;
     return (world ? 1 : 0) | (exact ? 2 : 0);
 }
 
@@ -811,6 +837,7 @@ static const char *PRESENT_FS =
     "#version 330\n"
     "in vec2 v_uv; uniform sampler2D u_tex; out vec4 frag;\n"
     "void main(){ frag = texture(u_tex, v_uv); }\n";
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
 static const char *INTERP_FS =
     "#version 330\n"
     "in vec2 v_uv; uniform sampler2D u_prev; uniform sampler2D u_curr;\n"
@@ -826,6 +853,7 @@ static const char *INTERP_FS =
     "  }\n"
     "  frag=mix(prev,curr,alpha);\n"
     "}\n";
+#endif
 
 /* Geometry: position in VRAM pixels (draw offset already applied by gpu.c),
  * color rgb in 0..1, color a = mask bit (0/1). The clip transform is in
@@ -1251,6 +1279,7 @@ static void flush_cpu_upload(void) {
                         PSXGL_RED_INTEGER, GL_UNSIGNED_SHORT,
                         s_vram + (size_t)y * VRAM_W + x);
         glPixelStorei(PSXGL_UNPACK_ROW_LENGTH, 0);
+        temporal_note_raw_change();
         if (diag) s_rt_up_diag[4] += SDL_GetPerformanceCounter() - t0;
     }
 
@@ -1339,6 +1368,7 @@ static void pack_flush(void) {
     int h = s_pack_dirty.y1 - s_pack_dirty.y0 + 1;
     rect_clear(&s_pack_dirty);
     coh_record(GL_COH_PACK, x, y, x + w - 1, y + h - 1);
+    temporal_note_raw_change();
 
     p_glBindFramebuffer(PSXGL_FRAMEBUFFER, s_raw_fbo);
     glViewport(0, 0, VRAM_W, VRAM_H);
@@ -1699,6 +1729,8 @@ static void flush_tex_batch(void) {
         wide_target_begin(dx, s_tex_uXoff, s_tex_uXhalf);
         geometry_visual_uniforms(s_tex_uVisual, s_tex_uCamera, s_tex_uVisualOptions, 1);
         wide_set_bd_scale(s_tex_uXscale, s_tex_uXcenter);
+        temporal_draw(s_tb, nverts, 1, GL_TRIANGLES, semi, s_tb_mask,
+                      s_tb_filter, s_tb_twin, s_tb_gate, 0);
         if (s_ws_ablate != 2) tex_batch_draw_passes(nverts, semi);
         wide_clear_bd_scale(s_tex_uXscale, s_tex_uXcenter);
         geometry_visual_uniforms(s_tex_uVisual, s_tex_uCamera, s_tex_uVisualOptions, 0);
@@ -1753,6 +1785,7 @@ static void flush_flat_batch(void) {
         wide_target_begin(dx, s_geo_uXoff, s_geo_uXhalf);
         geometry_visual_uniforms(s_geo_uVisual, s_geo_uCamera, s_geo_uVisualOptions, 1);
         wide_set_bd_scale(s_geo_uXscale, s_geo_uXcenter);
+        temporal_draw(s_fb, nverts, 0, GL_TRIANGLES, semi, mask, 0, NULL, 0, 0);
         if (s_ws_ablate != 2) glDrawArrays(GL_TRIANGLES, 0, nverts);
         wide_clear_bd_scale(s_geo_uXscale, s_geo_uXcenter);
         geometry_visual_uniforms(s_geo_uVisual, s_geo_uCamera, s_geo_uVisualOptions, 0);
@@ -1768,13 +1801,15 @@ static void flush_flat_batch(void) {
  * bit 1 identifies exact provenance for the optional coverage tint. */
 static void gpu_geometry(GLenum mode, const int *xs, const int *ys,
                          const uint16_t *cs, int n, int semi) {
-    float px[3] = {0}, py[3] = {0};
+    float px[3] = {0}, py[3] = {0}, pz[3] = {0};
     int visual_flags = 0;
     if (mode == GL_TRIANGLES && n == 3)
-        visual_flags = take_visual_triangle(xs, ys, px, py, NULL);
+        visual_flags = take_visual_triangle(xs, ys, px, py, NULL, pz);
     else {
         s_next_world = 0;
         s_next_precise = 0;
+        s_next_perspective = 0;
+        s_next_temporal_depth = 0;
     }
     flush_tex_batch();   /* flat prim: drain textured draws first (order + program) */
     flush_cpu_upload();  /* also drains flat batch if an upload was pending */
@@ -1795,6 +1830,7 @@ static void gpu_geometry(GLenum mode, const int *xs, const int *ys,
             verts[i*GEOV+6] = 0.0f;
             verts[i*GEOV+7] = (float)xs[i];
             verts[i*GEOV+8] = (float)ys[i];
+            verts[i*GEOV+9] = 0.0f;
         }
         hr_begin(1);
         if (semi >= 0) apply_psx_blend(semi); else glDisable(GL_BLEND);
@@ -1815,6 +1851,7 @@ static void gpu_geometry(GLenum mode, const int *xs, const int *ys,
             wide_target_begin(dx, s_geo_uXoff, s_geo_uXhalf);
             geometry_visual_uniforms(s_geo_uVisual, s_geo_uCamera, s_geo_uVisualOptions, 1);
             wide_set_bd_scale(s_geo_uXscale, s_geo_uXcenter);
+            temporal_draw(verts, n, 0, mode, semi, s_mask_set, 0, NULL, s_bd_gate, 0);
             if (s_ws_ablate != 2) glDrawArrays(mode, 0, n);
             wide_clear_bd_scale(s_geo_uXscale, s_geo_uXcenter);
             geometry_visual_uniforms(s_geo_uVisual, s_geo_uCamera, s_geo_uVisualOptions, 0);
@@ -1844,6 +1881,7 @@ static void gpu_geometry(GLenum mode, const int *xs, const int *ys,
         v[6] = (float)visual_flags;
         v[7] = visual_flags ? px[i] : (float)xs[i];
         v[8] = visual_flags ? py[i] : (float)ys[i];
+        v[9] = pz[i]; /* temporal identity only; no shader attribute */
         s_fb_n++;
     }
 }
@@ -1874,8 +1912,8 @@ static void gpu_textured_triangle(const int *xs, const int *ys,
                                   const float *col, uint16_t texpage,
                                   uint16_t clut_x, uint16_t clut_y, int rawtex,
                                   int semi, const int *lim) {
-    float px[3], py[3], pq[3];
-    const int visual_flags = take_visual_triangle(xs, ys, px, py, pq);
+    float px[3], py[3], pq[3], pz[3];
+    const int visual_flags = take_visual_triangle(xs, ys, px, py, pq, pz);
     int lim_buf[4];
     int uv_buf[6];
     if (!lim) {
@@ -1961,6 +1999,7 @@ static void gpu_textured_triangle(const int *xs, const int *ys,
             vp[20] = visual_flags ? px[i] : (float)xs[i];            /* a_visual_pos */
             vp[21] = visual_flags ? py[i] : (float)ys[i];
             vp[22] = pq[i];                                          /* a_q (0 = affine) */
+            vp[23] = pz[i]; /* temporal identity only; no shader attribute */
         }
         s_tb_n += 3;
         if (isolate) flush_tex_batch();   /* draw this semi prim alone, in submission order */
@@ -1980,9 +2019,9 @@ static void wide_flat_rect_direct(int wx, int y, int ww, int h, uint16_t c, int 
     float a = s_mask_set ? 1.0f : 0.0f;
     float fx0 = (float)wx, fy0 = (float)y, fx1 = (float)(wx + ww), fy1 = (float)(y + h);
     float verts[6 * GEOV] = {
-        fx0,fy0,r,g,b,a,0,fx0,fy0,  fx1,fy0,r,g,b,a,0,fx1,fy0,
-        fx0,fy1,r,g,b,a,0,fx0,fy1,  fx1,fy0,r,g,b,a,0,fx1,fy0,
-        fx0,fy1,r,g,b,a,0,fx0,fy1,  fx1,fy1,r,g,b,a,0,fx1,fy1,
+        fx0,fy0,r,g,b,a,0,fx0,fy0,0,  fx1,fy0,r,g,b,a,0,fx1,fy0,0,
+        fx0,fy1,r,g,b,a,0,fx0,fy1,0,  fx1,fy0,r,g,b,a,0,fx1,fy0,0,
+        fx0,fy1,r,g,b,a,0,fx0,fy1,0,  fx1,fy1,r,g,b,a,0,fx1,fy1,0,
     };
     /* Wide target: positions already wide-space so u_xoff = 0; full-width
      * scissor; u_xhalf = g_wide_w/2. */
@@ -1999,6 +2038,7 @@ static void wide_flat_rect_direct(int wx, int y, int ww, int h, uint16_t c, int 
     p_glBindVertexArray(s_geo_vao);
     p_glBindBuffer(PSXGL_ARRAY_BUFFER, s_geo_vbo);
     p_glBufferData(PSXGL_ARRAY_BUFFER, sizeof verts, verts, PSXGL_STREAM_DRAW);
+    temporal_draw(verts, 6, 0, GL_TRIANGLES, semi, s_mask_set, 0, NULL, 0, 1);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     p_glUniform1f(s_geo_uXoff, 0.0f);
     p_glUniform1f(s_geo_uXhalf, 512.0f);
@@ -2011,6 +2051,7 @@ static void gpu_flat_rect(int x,int y,int w,int h,uint16_t c,int semi) {
     s_next_world = 0;
     s_next_precise = 0;
     s_next_perspective = 0;
+    s_next_temporal_depth = 0;
     if (w <= 0 || h <= 0) return;
     /* Full-screen 2D overlay (pause gray-filter / load fade): a flat rect
      * spanning the whole 4:3 framebuffer must cover the whole wide surface too,
@@ -2032,6 +2073,7 @@ static void gpu_flat_rect(int x,int y,int w,int h,uint16_t c,int semi) {
     gpu_triangle(x,   y,   c, x+w, y,   c, x,   y+h, c, semi);
     gpu_triangle(x+w, y,   c, x,   y+h, c, x+w, y+h, c, semi);
     if (overlay) {
+        flush_flat_batch();
         s_wide_suppress = 0;
         /* The two canonical triangles drew into the hr FBO already (each
          * gpu_triangle ran its own hr_begin/hr_end). Re-open the bracket just
@@ -2055,6 +2097,7 @@ static void gpu_textured_rect(int x,int y,int w,int h,
     s_next_world = 0;
     s_next_precise = 0;
     s_next_perspective = 0;
+    s_next_temporal_depth = 0;
     if (w <= 0 || h <= 0) return;
     float mr=s_mod_r/255.0f, mg=s_mod_g/255.0f, mb=s_mod_b/255.0f;
     float col[9]={mr,mg,mb, mr,mg,mb, mr,mg,mb};
@@ -2192,12 +2235,14 @@ static void glb_set_texture_filter(int b) { s_tex_filter = b ? 1 : 0; sw_set_tex
 static int  glb_texture_filter(void) { return s_tex_filter; }
 
 static void glb_set_geometry_correction(int enabled) {
+    if ((enabled ? 1 : 0) != s_geometry_correction) interp_reset_history();
     if (s_raster_ok) { flush_flat_batch(); flush_tex_batch(); }
     s_geometry_correction = enabled ? 1 : 0;
     if (!s_geometry_correction) {
         s_next_world = 0;
         s_next_precise = 0;
         s_next_perspective = 0;
+        s_next_temporal_depth = 0;
         s_yaw_sin = 0.0f;
         s_yaw_cos = 1.0f;
     }
@@ -2206,6 +2251,7 @@ static void glb_set_geometry_correction(int enabled) {
 static void glb_set_world_triangle(int world) {
     if (!s_raster_ok) return;
     s_next_world = world ? 1 : 0;
+    if (!world) s_next_temporal_depth = 0;
 }
 
 static void glb_set_precise_triangle(int enabled,
@@ -2217,6 +2263,7 @@ static void glb_set_precise_triangle(int enabled,
         return;
     }
     s_next_precise = enabled ? 1 : 0;
+    if (!enabled) s_next_temporal_depth = 0;
     s_next_x16[0] = x0; s_next_y16[0] = y0;
     s_next_x16[1] = x1; s_next_y16[1] = y1;
     s_next_x16[2] = x2; s_next_y16[2] = y2;
@@ -2236,6 +2283,19 @@ static void glb_set_perspective_triangle(int enabled,
     s_next_q[2] = q2;
     s_next_perspective = 1;
 }
+
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+static void glb_set_temporal_depth_triangle(int enabled,
+                                            float z0, float z1, float z2) {
+    s_next_temporal_depth = 0;
+    if (!s_raster_ok || !enabled ||
+        !isfinite(z0) || !isfinite(z1) || !isfinite(z2) ||
+        z0 <= 0.0f || z1 <= 0.0f || z2 <= 0.0f)
+        return;
+    s_next_z[0] = z0; s_next_z[1] = z1; s_next_z[2] = z2;
+    s_next_temporal_depth = 1;
+}
+#endif
 
 static void glb_set_presentation_yaw(double yaw_units, double full_turn,
                                      double center_x, double center_y,
@@ -2386,6 +2446,7 @@ static void depth24_clear_skipped_fb(void) {
     glStencilMask(0xFF);
     glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     if (s_raw_fbo) {
+        temporal_note_raw_change();
         p_glBindFramebuffer(PSXGL_FRAMEBUFFER, s_raw_fbo);
         glViewport(0, 0, VRAM_W, VRAM_H);
         glScissor(x0, y0, rw, rh);
@@ -2880,11 +2941,16 @@ int gl_renderer_init_context(SDL_Window *win) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         s_present_prog = build_program(PRESENT_VS, PRESENT_FS);
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
         s_interp_prog = build_program(PRESENT_VS, INTERP_FS);
         if (s_present_prog && s_interp_prog) {
+#else
+        if (s_present_prog) {
+#endif
             p_glGenVertexArrays(1, &s_present_vao);
             s_present_uTex = p_glGetUniformLocation(s_present_prog, "u_tex");
             s_present_uUvRect = p_glGetUniformLocation(s_present_prog, "u_uv_rect");
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
             s_interp_uPrev = p_glGetUniformLocation(s_interp_prog, "u_prev");
             s_interp_uCurr = p_glGetUniformLocation(s_interp_prog, "u_curr");
             s_interp_uAlpha = p_glGetUniformLocation(s_interp_prog, "u_alpha");
@@ -2897,6 +2963,7 @@ int gl_renderer_init_context(SDL_Window *win) {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             }
+#endif
         } else ok = 0;
     }
     if (ok) ok = init_gpu_raster();
@@ -2930,6 +2997,7 @@ void gl_renderer_set_swap_interval(int interval) {
 }
 
 void gl_renderer_shutdown(void) {
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
     if (s_interp_thread) {
         SDL_AtomicSet(&s_interp_thread_run, 0);
         SDL_WaitThread(s_interp_thread, NULL);
@@ -2952,6 +3020,7 @@ void gl_renderer_shutdown(void) {
             }
         }
         ensure_cpu();
+        temporal_release();
         SDL_GL_DeleteContext(s_ctx); s_ctx = NULL;
     }
     if (s_interp_mutex) {
@@ -2963,6 +3032,13 @@ void gl_renderer_shutdown(void) {
     s_interp_content_suspended = 0;
     s_interp_host_ui_suspended = 0;
     interp_reset_history_unlocked();
+#else
+    if (s_ctx) {
+        SDL_GL_MakeCurrent(s_win, s_ctx);
+        ensure_cpu();
+        SDL_GL_DeleteContext(s_ctx); s_ctx = NULL;
+    }
+#endif
     free(s_conv); s_conv = NULL;
     s_raster_ok = 0;
     /* New context regenerates s_present_tex empty; a stale size makes
@@ -3188,6 +3264,7 @@ void gl_renderer_diag(int *gpu_dirty, int pending[5], int pack[5]) {
  * ------------------------------------------------------------------------- */
 
 static void wide_free_all(void) {
+    interp_reset_history();
     for (int i = 0; i < WIDE_MAX_SURF; i++) {
         if (s_wide_fbo[i]) { p_glDeleteFramebuffers(1, &s_wide_fbo[i]); s_wide_fbo[i] = 0; }
         if (s_wide_tex[i]) { glDeleteTextures(1, &s_wide_tex[i]); s_wide_tex[i] = 0; }
@@ -3241,9 +3318,11 @@ static GLuint wide_fbo_for(int base_x) {
 static void glb_wide_configure(int wide_w, int offset) {
     if (!s_raster_ok) return;
     double t0 = cw_ms(); s_cw_wide_cfgs++;
+    flush_flat_batch();
     flush_tex_batch();   /* a queued batch's wide mirror targets the CURRENT surfaces */
     if (wide_w <= 0) { wide_free_all(); g_wide_w = 0; g_wide_off = 0; s_cw_wide_ms += cw_ms() - t0; return; }
     if (wide_w != g_wide_w) wide_free_all();
+    if (offset != g_wide_off) interp_reset_history();
     g_wide_w = wide_w;
     g_wide_off = offset;
     s_cw_wide_ms += cw_ms() - t0;
@@ -3253,6 +3332,7 @@ static void glb_wide_configure(int wide_w, int offset) {
 static void glb_wide_set_target(int base_x) {
     if (!s_raster_ok) { g_wide_cur = 0; return; }
     double t0 = cw_ms(); s_cw_wide_sets++;
+    flush_flat_batch();
     flush_tex_batch();   /* drain into the OLD target before switching */
     g_wide_cur = wide_fbo_for(base_x);
     g_wide_cur_base = base_x;
@@ -3260,7 +3340,7 @@ static void glb_wide_set_target(int base_x) {
 }
 
 /* Stop mirroring (offscreen draws that don't target a framebuffer). */
-static void glb_wide_disable_target(void) { flush_tex_batch(); g_wide_cur = 0; }
+static void glb_wide_disable_target(void) { flush_flat_batch(); flush_tex_batch(); g_wide_cur = 0; }
 
 /* Mirror a framebuffer clear: fill the full wide width over [y, y+h) of the
  * surface for base_x, so the revealed margins are clean. Mirrors sw_wide_clear:
@@ -3268,9 +3348,11 @@ static void glb_wide_disable_target(void) { flush_tex_batch(); g_wide_cur = 0; }
 static void glb_wide_clear(int base_x, int y, int h, uint16_t color) {
     if (!s_raster_ok || s_ws_ablate == 1) return;
     double t0 = cw_ms(); s_cw_wide_clears++;
+    flush_flat_batch();
     flush_tex_batch();
     GLuint fbo = wide_fbo_for(base_x);
     if (!fbo) { s_cw_wide_ms += cw_ms() - t0; return; }
+    temporal_begin(fbo, y, h, color);
     gl_perf_mirror_begin();
     int H = VRAM_H * s_scale;
     int y0 = y * s_scale, y1 = (y + h) * s_scale;
@@ -3300,9 +3382,11 @@ static void glb_wide_clear(int base_x, int y, int h, uint16_t color) {
 static void glb_wide_clear_margins(int base_x, int y, int h, uint16_t color, int sides) {
     if (!s_raster_ok || s_ws_ablate == 1 || g_wide_off <= 0) return;
     double t0 = cw_ms(); s_cw_wide_clears++;
+    flush_flat_batch();
     flush_tex_batch();
     GLuint fbo = wide_fbo_for(base_x);
     if (!fbo) { s_cw_wide_ms += cw_ms() - t0; return; }
+    temporal_invalidate_surface(fbo);
     gl_perf_mirror_begin();
     int H = VRAM_H * s_scale;
     int W = g_wide_w * s_scale;
@@ -3675,10 +3759,14 @@ int gl_renderer_perf_aggregate(int wide_filter, double out[18]) {
 }
 
 /* Native-wide mirror ablation (perf attribution): see s_ws_ablate. */
-void gl_renderer_set_ws_ablate(int mode) { s_ws_ablate = (mode >= 0 && mode <= 3) ? mode : 0; }
+void gl_renderer_set_ws_ablate(int mode) { interp_reset_history(); s_ws_ablate = (mode >= 0 && mode <= 3) ? mode : 0; }
 int  gl_renderer_get_ws_ablate(void)     { return s_ws_ablate; }
 
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+#include "gpu_gl_temporal.c.inc"
+
 static void interp_reset_history_unlocked(void) {
+    temporal_reset();
     s_interp_valid = 0;
     s_interp_w = s_interp_h = 0;
     s_interp_start = s_interp_last_capture = 0;
@@ -3698,6 +3786,7 @@ void gl_renderer_set_interpolation(int enabled, double host_hz, double target_hz
         ? -1.0
         : (target_hz >= 60.0 ? target_hz : host_hz);
     int active = (enabled &&
+                  (blend_mode != 2 || s_geometry_correction) &&
                   (effective_hz < 0.0 || effective_hz >= 50.0)) ? 1 : 0;
     const char *diag = getenv("PSX_GL_INTERP_DIAG");
     s_interp_diag = diag && diag[0] && diag[0] != '0';
@@ -3712,6 +3801,7 @@ void gl_renderer_set_interpolation(int enabled, double host_hz, double target_hz
          * FMV temporarily suspends interpolation and the main context presents. */
         SDL_GL_SetSwapInterval(0);
         if (s_interp_ctx && s_interp_mutex) {
+            SDL_AtomicSet(&s_temp_worker_ready, 0);
             SDL_AtomicSet(&s_interp_thread_run, 1);
             s_interp_thread = SDL_CreateThread(interp_thread_main,
                                                "psx-gl-interp", NULL);
@@ -3723,24 +3813,28 @@ void gl_renderer_set_interpolation(int enabled, double host_hz, double target_hz
             active = 0;
         }
     }
+    if (active && s_interp_thread) {
+        while (!SDL_AtomicGet(&s_temp_worker_ready)) SDL_Delay(1);
+        if (blend_mode == 2 && SDL_AtomicGet(&s_temp_worker_ready) < 0) active = 0;
+    }
     if (s_interp_mutex) SDL_LockMutex(s_interp_mutex);
-    if (active != s_interp_enabled) interp_reset_history_unlocked();
+    if (active != s_interp_enabled || blend_mode != s_interp_blend_mode) interp_reset_history_unlocked();
     s_interp_enabled = active;
     s_interp_host_hz = host_hz;
     s_interp_target_hz = active ? effective_hz : 0.0;
-    s_interp_blend_mode = blend_mode == 1 ? 1 : 0;
+    s_interp_blend_mode = blend_mode == 2 ? 2 : blend_mode == 1 ? 1 : 0;
     if (s_interp_mutex) SDL_UnlockMutex(s_interp_mutex);
     /* Enabling interpolation forces immediate swaps; disabling restores the
      * last user-requested interval kept in s_swap_interval. */
     apply_swap_interval();
     if (active && effective_hz < 0.0)
         fprintf(stdout, "psxrecomp: GL frame interpolation enabled: uncapped "
-                "target on %.1f Hz display (%s blend)\n", host_hz,
-                s_interp_blend_mode ? "motion-adaptive" : "linear");
+                "target on %.1f Hz display (%s)\n", host_hz,
+                s_interp_blend_mode == 2 ? "geometry inter-frame" : s_interp_blend_mode ? "motion-adaptive" : "linear");
     else if (active)
         fprintf(stdout, "psxrecomp: GL frame interpolation enabled: %.1f FPS "
-                "target on %.1f Hz display (%s blend)\n", effective_hz, host_hz,
-                s_interp_blend_mode ? "motion-adaptive" : "linear");
+                "target on %.1f Hz display (%s)\n", effective_hz, host_hz,
+                s_interp_blend_mode == 2 ? "geometry inter-frame" : s_interp_blend_mode ? "motion-adaptive" : "linear");
     else
         fprintf(stdout, "psxrecomp: GL frame interpolation disabled (host %.1f Hz)\n", host_hz);
 }
@@ -3781,6 +3875,18 @@ void gl_renderer_interpolation_diag(int *enabled, int *suspended,
     if (s_interp_mutex) SDL_UnlockMutex(s_interp_mutex);
 }
 
+void gl_renderer_geometry_interpolation_diag(uint64_t out[6]) {
+    if (!out) return;
+    if (s_interp_mutex) SDL_LockMutex(s_interp_mutex);
+    out[0] = s_temp_published;
+    out[1] = s_temp_replays;
+    out[2] = s_temp_fallbacks;
+    out[3] = (uint64_t)s_temp_last_matched;
+    out[4] = (uint64_t)s_temp_last_world;
+    out[5] = (uint64_t)s_temp_last_ready;
+    if (s_interp_mutex) SDL_UnlockMutex(s_interp_mutex);
+}
+
 /* Copy a stable display image out of the mutable VRAM/wide render target.
  * Returns true once both previous and current images are available. */
 static int interp_capture(GLuint fbo, int x, int y, int w, int h,
@@ -3799,6 +3905,7 @@ static int interp_capture(GLuint fbo, int x, int y, int w, int h,
     int pw = w * s_scale, ph = h * s_scale;
     if (pw != s_interp_w || ph != s_interp_h ||
         source_path != s_interp_source_path || force_4_3 != s_interp_force_4_3) {
+        temporal_reset();
         s_interp_valid = 0;
         s_interp_w = pw; s_interp_h = ph;
         s_interp_prev = s_interp_cur = 0;
@@ -3821,6 +3928,7 @@ static int interp_capture(GLuint fbo, int x, int y, int w, int h,
     glBindTexture(GL_TEXTURE_2D, s_interp_tex[dst]);
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
                         x * s_scale, y * s_scale, pw, ph);
+    if (s_interp_blend_mode == 2) temporal_publish(fbo, y, w, h);
     s_interp_fence[dst] = p_glFenceSync(PSXGL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     glFlush();
     p_glBindFramebuffer(PSXGL_READ_FRAMEBUFFER, 0);
@@ -3844,6 +3952,7 @@ static int interp_capture(GLuint fbo, int x, int y, int w, int h,
         s_interp_cur = dst;
         s_interp_valid = 2;
     }
+    s_interp_scale = s_scale;
     s_interp_linear = linear;
     s_interp_force_4_3 = force_4_3;
     s_interp_source_path = source_path;
@@ -3854,6 +3963,11 @@ static int interp_capture(GLuint fbo, int x, int y, int w, int h,
 }
 
 static void interp_draw_quad(float alpha, int lx, int ly, int lw, int lh) {
+    if (s_interp_blend_mode == 2) {
+        temporal_verify_endpoint(lx, ly, lw, lh);
+        if (alpha < 1.0f && temporal_present(alpha, lx, ly, lw, lh)) return;
+        alpha = 1.0f; /* Unsafe/incomplete geometry: current frame, never a crossfade. */
+    }
     int prev = s_interp_prev, curr = s_interp_cur;
     if (s_interp_fence[prev])
         p_glWaitSync(s_interp_fence[prev], 0, PSXGL_TIMEOUT_IGNORED);
@@ -3874,7 +3988,10 @@ static void interp_draw_quad(float alpha, int lx, int ly, int lw, int lh) {
     p_glUniform1i(s_interp_uCurr, 1);
     p_glUniform1f(s_interp_uAlpha, alpha);
     p_glUniform1i(s_interp_uBlendMode, s_interp_blend_mode);
-    p_glUniform4f(s_interp_uUvRect, 0.f, 0.f, 1.f, 1.f);
+    if (s_interp_blend_mode == 2) {
+        const float ix=0.5f*s_interp_scale/s_interp_w, iy=0.5f*s_interp_scale/s_interp_h;
+        p_glUniform4f(s_interp_uUvRect,ix,iy,1-ix,1-iy);
+    } else p_glUniform4f(s_interp_uUvRect, 0.f, 0.f, 1.f, 1.f);
     p_glBindVertexArray(s_interp_thread_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     p_glBindVertexArray(0);
@@ -3919,9 +4036,13 @@ static int interp_present(void) {
 
 static int interp_thread_main(void *opaque) {
     (void)opaque;
-    if (SDL_GL_MakeCurrent(s_win, s_interp_ctx) != 0) return -1;
+    if (SDL_GL_MakeCurrent(s_win, s_interp_ctx) != 0) {
+        SDL_AtomicSet(&s_temp_worker_ready, -1);
+        return -1;
+    }
     SDL_GL_SetSwapInterval(0); /* host-period scheduler owns cadence */
     p_glGenVertexArrays(1, &s_interp_thread_vao);
+    SDL_AtomicSet(&s_temp_worker_ready, temporal_worker_init() ? 1 : -1);
     uint64_t freq = SDL_GetPerformanceFrequency();
     uint64_t deadline = SDL_GetPerformanceCounter();
     uint64_t diag_start = deadline, diag_swaps = 0, diag_captures = 0;
@@ -3962,6 +4083,21 @@ static int interp_thread_main(void *opaque) {
                     "%.2f captures/s, %.2f presents/s\n",
                     (double)(s_interp_captures - diag_captures) / seconds,
                     (double)(s_interp_swaps - diag_swaps) / seconds);
+            if (s_interp_blend_mode == 2) {
+                fprintf(stdout, "psxrecomp: GL geometry interpolation: %llu scenes, "
+                        "%llu redraws, %llu fallback captures, %d/%d matched world triangles\n",
+                        (unsigned long long)s_temp_published, (unsigned long long)s_temp_replays,
+                        (unsigned long long)s_temp_fallbacks, s_temp_curr.matched, s_temp_curr.world);
+                fprintf(stdout, "psxrecomp: GL geometry mesh: %d moving triangles, "
+                        "%d seeded / %d shared vertices, %d propagated corners, "
+                        "%d conflicts, %d held vertices, %d anchored junctions\n",
+                        s_temp_curr.moving, s_temp_curr.mesh_stats.seeded_vertices,
+                        s_temp_curr.mesh_stats.shared_vertices,
+                        s_temp_curr.mesh_stats.propagated_vertices,
+                        s_temp_curr.mesh_stats.conflicting_vertices,
+                        s_temp_curr.mesh_stats.held_vertices,
+                        s_temp_curr.mesh_stats.anchored_junctions);
+            }
             fflush(stdout);
             diag_start = now;
             diag_captures = s_interp_captures;
@@ -3974,6 +4110,32 @@ static int interp_thread_main(void *opaque) {
     SDL_GL_MakeCurrent(s_win, NULL);
     return 0;
 }
+
+#else
+/* Retain the framework ABI while the experimental presenter is compiled out.
+ * No history, capture, shared context, worker or diagnostic output is created. */
+void gl_renderer_set_interpolation(int enabled, double host_hz, double target_hz,
+                                   int blend_mode) {
+    (void)enabled; (void)target_hz; (void)blend_mode;
+    fprintf(stdout, "psxrecomp: GL frame interpolation disabled (build; host %.1f Hz)\n",
+            host_hz);
+}
+void gl_renderer_set_interpolation_suspended(int suspended) { (void)suspended; }
+void gl_renderer_set_host_ui_suspended(int suspended) { (void)suspended; }
+void gl_renderer_interpolation_diag(int *enabled, int *suspended,
+                                    int *history_frames, double *host_hz,
+                                    double *target_hz, uint64_t *swaps) {
+    if (enabled) *enabled = 0;
+    if (suspended) *suspended = 0;
+    if (history_frames) *history_frames = 0;
+    if (host_hz) *host_hz = 0.0;
+    if (target_hz) *target_hz = 0.0;
+    if (swaps) *swaps = 0;
+}
+void gl_renderer_geometry_interpolation_diag(uint64_t out[6]) {
+    if (out) memset(out, 0, 6 * sizeof(*out));
+}
+#endif
 
 static void present_target_quad(GLuint tex, int tex_w, int tex_h,
                                 int x, int y, int w, int h, int linear,
@@ -4168,6 +4330,11 @@ static const GpuRenderBackend GL_BACKEND = {
     .set_world_triangle = glb_set_world_triangle,
     .set_precise_triangle = glb_set_precise_triangle,
     .set_perspective_triangle = glb_set_perspective_triangle,
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    .set_temporal_depth_triangle = glb_set_temporal_depth_triangle,
+#else
+    .set_temporal_depth_triangle = NULL,
+#endif
     .set_presentation_yaw = glb_set_presentation_yaw,
     .fill_rect = glb_fill_rect, .copy_rect = glb_copy_rect,
     .draw_flat_triangle = glb_draw_flat_triangle, .draw_gouraud_triangle = glb_draw_gouraud_triangle,

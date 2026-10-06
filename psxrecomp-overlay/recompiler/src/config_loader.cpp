@@ -544,9 +544,9 @@ static RuntimeConfig parse_runtime_block(const toml::value& cfg, const fs::path&
         const toml::value& video = toml::find(cfg, "video");
         if (video.contains("supersampling")) {
             const auto n = toml::find<int64_t>(video, "supersampling");
-            if (n < 1 || n > 4) {
+            if (n < 1 || n > 8) {
                 throw std::runtime_error(fmt::format(
-                    "[video] supersampling out of range (1..4): {}", n));
+                    "[video] supersampling out of range (1..8): {}", n));
             }
             rt.video_supersampling = static_cast<int>(n);
         }
@@ -2170,7 +2170,7 @@ UserSettings load_user_settings(const fs::path& path) {
         });
         if (v.contains("supersampling")) try_get([&]{
             const auto n = toml::find<int64_t>(v, "supersampling");
-            if (n >= 1 && n <= 4) { s.supersampling = (int)n; s.has_supersampling = true; }
+            if (n >= 1 && n <= 8) { s.supersampling = (int)n; s.has_supersampling = true; }
         });
         if (v.contains("window_width")) try_get([&]{
             const auto n = toml::find<int64_t>(v, "window_width");
@@ -2236,7 +2236,7 @@ UserSettings load_user_settings(const fs::path& path) {
         });
         if (v.contains("frame_interpolation_blend")) try_get([&]{
             const auto n = toml::find<int64_t>(v, "frame_interpolation_blend");
-            if (n == 0 || n == 1) {
+            if (n == 0 || n == 1 || n == 2) {
                 s.frame_interpolation_blend = static_cast<int>(n);
                 s.has_frame_interpolation_blend = true;
             }
@@ -2257,6 +2257,17 @@ UserSettings load_user_settings(const fs::path& path) {
         const toml::value& a = toml::find(doc, "audio");
         if (a.contains("spu_hq")) try_get([&]{
             s.spu_hq = toml::find<bool>(a, "spu_hq"); s.has_spu_hq = true;
+        });
+        if (a.contains("master_volume")) try_get([&]{
+            const auto n = toml::find<int64_t>(a, "master_volume");
+            if (n >= 0 && n <= 100) {
+                s.master_volume = static_cast<int>(n);
+                s.has_master_volume = true;
+            }
+        });
+        if (a.contains("muted")) try_get([&]{
+            s.audio_muted = toml::find<bool>(a, "muted");
+            s.has_audio_muted = true;
         });
     }
     if (doc.contains("launcher")) {
@@ -2537,7 +2548,8 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
         f << "frame_interpolation_fps = " << s.frame_interpolation_fps << "\n";
     if (s.has_frame_interpolation_blend &&
         (s.frame_interpolation_blend == 0 ||
-         s.frame_interpolation_blend == 1))
+         s.frame_interpolation_blend == 1 ||
+         s.frame_interpolation_blend == 2))
         f << "frame_interpolation_blend = " << s.frame_interpolation_blend << "\n";
     if (s.has_aspect_ratio)
         f << "aspect_ratio      = \"" << s.aspect_num << ":" << s.aspect_den << "\"\n";
@@ -2546,6 +2558,10 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
     f << "\n[audio]\n";
     if (s.has_spu_hq)
         f << "spu_hq = " << (s.spu_hq ? "true" : "false") << "\n";
+    if (s.has_master_volume)
+        f << "master_volume = " << s.master_volume << "\n";
+    if (s.has_audio_muted)
+        f << "muted = " << (s.audio_muted ? "true" : "false") << "\n";
     if (s.has_skip_launcher)
         f << "\n[launcher]\nskip_launcher = " << (s.skip_launcher ? "true" : "false") << "\n";
     if ((s.has_netplay_player_name && !s.netplay_player_name.empty()) ||

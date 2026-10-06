@@ -83,6 +83,16 @@ uint32_t psx_mod_gpu_dma_memory_alloc(uint32_t size, uint32_t alignment) {
     return PSX_MOD_GPU_DMA_GUEST_BASE + start;
 }
 
+uint32_t psx_mod_gpu_dma_memory_bytes(void) { return mod_gpu_dma_memory_used; }
+const uint8_t *psx_mod_gpu_dma_memory_data(void) { return mod_gpu_dma_memory; }
+int psx_mod_gpu_dma_memory_restore(const uint8_t *data, uint32_t size) {
+    if (size > PSX_MOD_GPU_DMA_APERTURE_SIZE || (size && !data)) return 0;
+    if (size) memcpy(mod_gpu_dma_memory, data, size);
+    memset(mod_gpu_dma_memory + size, 0, PSX_MOD_GPU_DMA_APERTURE_SIZE - size);
+    mod_gpu_dma_memory_used = size;
+    return 1;
+}
+
 static int mod_gpu_dma_memory_offset(uint32_t phys, uint32_t width,
                                      uint32_t *offset) {
     return psx_mod_gpu_dma_aperture_offset_for(
@@ -1590,7 +1600,9 @@ static void psx_write_word_raw(uint32_t addr, uint32_t val) {
     {
         uint32_t off;
         if (mod_gpu_dma_memory_offset(phys, 4u, &off)) {
+            gte_precision_invalidate_word(addr);
             memcpy(mod_gpu_dma_memory + off, &val, sizeof(val));
+            gte_precision_gpu_dma_word_committed(phys);
             return;
         }
     }
@@ -1721,6 +1733,7 @@ static void psx_write_half_raw(uint32_t addr, uint16_t val) {
     {
         uint32_t off;
         if (mod_gpu_dma_memory_offset(phys, 2u, &off)) {
+            gte_precision_invalidate_word(addr);
             mod_gpu_dma_memory[off] = (uint8_t)val;
             mod_gpu_dma_memory[off + 1u] = (uint8_t)(val >> 8);
             return;
@@ -2057,6 +2070,7 @@ static void psx_write_byte_raw(uint32_t addr, uint8_t val) {
     {
         uint32_t off;
         if (mod_gpu_dma_memory_offset(phys, 1u, &off)) {
+            gte_precision_invalidate_word(addr);
             mod_gpu_dma_memory[off] = val;
             return;
         }

@@ -329,7 +329,7 @@ struct RuntimeConfig {
 
     // ---- [video] block — visual enhancement options ----
     // supersampling: internal-resolution SSAA factor (per axis). 1 = native
-    // (default, behaves exactly as before). 2..4 render geometry/shading into
+    // (default, behaves exactly as before). 2..8 render geometry/shading into
     // an N*-scaled mirror of VRAM and downsample on present — true ordered-grid
     // supersampling + edge anti-aliasing. Cost scales ~N^2 in fill rate.
     int                   video_supersampling = 1;
@@ -1001,7 +1001,7 @@ struct UserSettings {
 
     // [video]
     bool has_renderer       = false; int  renderer       = 0; // 0=software,1=opengl
-    bool has_supersampling  = false; int  supersampling  = 1; // 1..4
+    bool has_supersampling  = false; int  supersampling  = 1; // 1..8
     // Window size: width in px; height is always width*3/4 (PSX 4:3). Applies to
     // both the launcher and the emulator window so they boot at the same size.
     bool has_window_width   = false; int  window_width   = 1280; // -> 1280x960
@@ -1033,7 +1033,9 @@ struct UserSettings {
     bool has_vsync             = false; int  vsync             = 1;
     bool has_frame_interpolation = false; bool frame_interpolation = false;
     bool has_frame_interpolation_fps = false; int frame_interpolation_fps = 0;
-    // Frame-interpolation blend policy: 0 = linear, 1 = adaptive.
+    // Frame-interpolation mode: 0 = legacy linear, 1 = legacy adaptive,
+    // 2 = geometry inter-frame redraw. Activation remains session-only in
+    // Disruptor; its runtime migrates saved legacy modes to geometry.
     bool has_frame_interpolation_blend = false; int frame_interpolation_blend = 0;
     // [launcher] — when true, boot straight into the game and skip the GUI
     // launcher window (mirrors snesrecomp's SkipLauncher). Overridable per-run:
@@ -1048,6 +1050,10 @@ struct UserSettings {
     bool has_adaptive_view  = false; bool adaptive_view  = false;
     // [audio]
     bool has_spu_hq         = false; bool spu_hq         = false;
+    // Host-output controls. These scale the final mixed stereo stream and do
+    // not alter SPU registers, voice state, CD playback state or guest saves.
+    bool has_master_volume  = false; int  master_volume  = 100; // 0..100
+    bool has_audio_muted    = false; bool audio_muted    = false;
     // [bios] / [disc] / [memcard]
     bool has_bios_path      = false; std::filesystem::path bios_path;
     bool has_disc_path      = false; std::filesystem::path disc_path;

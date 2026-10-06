@@ -1,0 +1,71 @@
+/* Disruptor's widened visibility can exceed its two 0x11000-byte primitive
+ * arenas. The second arena is immediately followed by texture descriptors;
+ * spilling packets into those descriptors corrupts subsequent frames.
+ * Relocate only the audited renderer's arena roots, using the framework's
+ * opt-in memory that survives the GPU's 24-bit linked-list tags. */
+#include "cpu_state.h"
+#include "lockstep.h"
+#include "mod_plugins.h"
+#include "mod_memory.h"
+#include "psx_netplay.h"
+
+#include <cstdint>
+
+namespace {
+constexpr uint32_t kRendererEntry = 0x80040E68u;
+constexpr uint32_t kContexts[2] = {0x80074458u, 0x80074E50u};
+constexpr uint32_t kOriginalRoots[2] = {0x800776BCu, 0x800776C0u};
+constexpr uint32_t kArenaOffset = 0x70u;
+constexpr uint32_t kRetailBytes = 0x11000u;
+constexpr uint32_t kArenaBytes = PSX_MOD_GPU_DMA_APERTURE_SIZE / 2u;
+uint32_t g_arena_base = 0;
+
+void renderer_entry(CPUState *cpu, uint32_t address) {
+    if (!cpu || address != kRendererEntry || !psx_mod_game_started()) return;
+    unsigned index;
+    for (index = 0; index < 2u; ++index)
+        if (cpu->gpr[4] == kContexts[index]) break;
+    if (index == 2u) return;
+
+    const uint32_t original = psx_mod_read_word(kOriginalRoots[index]);
+    if (original < 0x80000000u || original > 0x80200000u - kRetailBytes ||
+        (original & 3u) != 0u) return;
+    const uint32_t root_address = kContexts[index] + kArenaOffset;
+    const uint32_t current = psx_mod_read_word(root_address);
+    /* Allocation state is part of the machine snapshot; this host cache is
+     * re-derived when a state is loaded into another process or timeline. */
+    const uint32_t allocated = psx_mod_gpu_dma_memory_bytes();
+    if (allocated != 2u * kArenaBytes) g_arena_base = 0u;
+    const uint32_t saved_root = PSX_MOD_GPU_DMA_GUEST_BASE + index * kArenaBytes;
+    if (!g_arena_base && allocated == 2u * kArenaBytes && current == saved_root)
+        g_arena_base = PSX_MOD_GPU_DMA_GUEST_BASE;
+    const uint32_t relocated = g_arena_base ?
+        g_arena_base + index * kArenaBytes : 0u;
+    if (current != original && current != relocated) return;
+
+    if (g_ls_mode || g_ls_replay_active || psx_netplay_active() ||
+        psx_mod_widescreen_x_margin() == 0) {
+        if (current == relocated && relocated)
+            psx_mod_write_word(root_address, original);
+        return;
+    }
+    if (!g_arena_base) {
+        g_arena_base = psx_mod_alloc_gpu_dma_memory(2u * kArenaBytes, 16u);
+        if (!g_arena_base) return;
+    }
+    const uint32_t destination = g_arena_base + index * kArenaBytes;
+    if (current == destination) return;
+
+    /* Preserve any retail packet templates on activation or a level reset.
+     * Each back buffer owns a separate arena; ordering tables stay in RAM. */
+    for (uint32_t offset = 0; offset < kRetailBytes; offset += 4u)
+        psx_mod_write_word(destination + offset,
+                           psx_mod_read_word(original + offset));
+    psx_mod_write_word(root_address, destination);
+}
+
+PSX_MOD_CONSTRUCTOR(register_disruptor_render_arena) {
+    psx_mod_register_function_entry_plugin(
+        "disruptor.render_arena", kRendererEntry, renderer_entry);
+}
+} // namespace

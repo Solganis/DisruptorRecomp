@@ -25,8 +25,8 @@ No proprietary PlayStation BIOS is bundled or required.
   second through menus, movies, and gameplay, with clean audio in the latest
   user validation.
 - OpenGL geometry supersampling defaults to 4x internal scale (2560x1920 at
-  authentic 4:3) and can be switched live between 1x, 2x, 3x and 4x from the
-  developer menu. A Windows test supplied 120 steady-state one-second samples
+  authentic 4:3) and can be switched live from 1x through 8x in the settings
+  menu. A Windows test supplied 120 steady-state one-second samples
   from 59.52 to 60.37 Hz, averaging 59.94 Hz.
 - Opt-in modern controls combine direct horizontal mouse turning with WASD,
   mouse fire/psionic buttons, and conventional keyboard action bindings.
@@ -38,6 +38,11 @@ validation is still pending.
 - An experimental projection-and-stretch 16:9 mode now widens Disruptor's
   upstream yaw frustum while preserving its original portal-coordinate domain.
   The HUD is corrected, and menus and movies remain pillarboxed.
+- Widescreen rendering now uses two separate 512 KiB primitive buffers. Dense
+  ultrawide views could exceed the retail 68 KiB buffers, overwrite texture
+  descriptors and eventually freeze gameplay. The replacement preserves GPU
+  linked-list addressing, geometry/perspective correction and save states.
+  The user confirmed a clean first-training-level retest at 8x and 32:9.
 - Modernisation Test 12 adds an opt-in presentation surface whose corrected
   vertices must match the exact RAM addresses of their GTE projection stores.
   Whole quads and fractional camera yaw share the same all-or-nothing gate;
@@ -206,52 +211,71 @@ Use `./run.sh --modern-controls --widescreen --geometry-correction
 Linux is primarily a compiler and diagnostic target; Windows remains the
 release target.
 
-## In-game settings and developer menu
+## In-game settings
 
-The OpenGL build includes a host-side settings and diagnostics menu. Press the
-backquote key (`` ` ``) to open or close it; Escape also closes it. The menu
-releases relative mouse capture while open, neutralises keyboard, mouse and
-controller input reaching the game, and restores the previous mouse-capture
-state when closed. Guest execution continues behind this first developer
-version of the menu.
+The OpenGL build includes a host-side settings menu. Press the backquote key
+(`` ` ``) to open or close it; Escape also closes it. The menu releases relative
+mouse capture while open, blocks game input, and restores the previous capture
+state when closed. Guest execution continues while the menu is open.
 
-The Controls tab changes horizontal mouse aim, modern controls, both axis
-sensitivities/inversion, experimental vertical look/recentering, and the
-sub-byte camera presentation live. Enhancements contains a live widescreen
-toggle with fixed 16:9, 21:9 and 32:9 choices plus a Match window mode that
-follows any live window ratio from 4:3 through 32:9. A live 1x-4x internal-
-resolution supersampling selector, exact geometry, perspective textures, VSync
-and the experimental presentation-only frame interpolator are also available. It
-also contains a session-only
-experimental draw-distance control with Retail, 1.25x and 1.5x presets.
-Its separate Distance shading control offers the retail palette ramp and a
-session-only Row 0 diagnostic. Disruptor implements this ramp by selecting one
-of twelve asset-authored CLUT rows; the diagnostic keeps reviewed world paths
-and the downstream world-billboard pass on the nearest row. It does not add
-geometry or bypass portal/content culling. The flat level-authored background
-clear and any tint already present in the nearest asset palette remain
-separate from this distance shading.
-Diagnostics reports exact-geometry coverage, provenance misses,
-perspective-texture use, interpolation state, widescreen state, the source and
-effective draw/fade distances, separate far/fade load substitutions, actual
-portal/object far-decision flips, conditional room marks and visible-room
-spans, recursion-cap hits, primitive-packet stage use, and renderer wall-span
-percentiles. Cheats
-provides a session-only God Mode and a confirmed
-one-shot retail All Weapons action. System exposes live Windowed, Borderless
-fullscreen, and Exclusive fullscreen choices, while also recording which
-renderer/audio/allocation settings still require a restart. Explicit menu
-choices are saved; Alt+Enter remains a transient toggle.
+Controls contains horizontal mouse aim, modern controls, both axis
+sensitivities/inversion, vertical look and recentering. Enhancements contains
+widescreen with fixed 16:9, 21:9 and 32:9 choices plus Match window, a live
+1x-8x internal-resolution selector, exact geometry, perspective textures and
+VSync. The default internal resolution remains 4x. Internal resolution is saved
+and restored on the next launch; GPU fill and memory costs grow with the square
+of the scale, and a failed live allocation retains the previous renderer.
+Cheats contains session-only God Mode and the confirmed retail All Weapons
+and psionics action. System contains window/fullscreen mode, master volume,
+mute and settings-save status. Alt+Enter remains a transient window-mode toggle.
+
+The Diagnostics tab, sprite-path isolation, skyline depth probes, draw-distance
+and distance-shading controls, and sub-byte camera presentation option are
+removed for public-build preparation. Sprite repair keeps all reviewed paths
+enabled; skyline coverage and sub-byte camera presentation are reset off, and
+experimental distance/shading reset to Retail at each menu runtime boundary.
+Old saved camera preferences are no longer applied. Frame interpolation remains
+compiled out.
+
+God Mode intercepts the game's central player-damage routine without changing
+saved health; it starts off on every launch. **Grant all weapons + psionics**
+also refills their resources and deliberately reproduces the retail cheat
+consequence: the current game is marked as cheated, which changes the ending
+message and is carried into subsequent memory-card/password saves. The menu
+requires confirmation before applying that irreversible gameplay action.
+
+Reviewed live settings are persisted in the user-owned `settings.toml` beside
+the executable (the development build uses `build/settings.toml`). Saves merge
+only fields changed in the menu and publish through an atomic replacement, so
+an I/O failure leaves the previous file intact. Explicit launch switches or
+environment values override saved preferences for that run. Mouse aim, modern
+controls, vertical-look enablement, both axis sensitivities/inversion,
+display aspect, internal resolution, window mode, exact
+geometry, perspective textures, VSync, master volume and mute persist; the
+current pitch does not.
+Menu layout/open state and mouse capture never persist. Experimental draw distance and distance shading also return to retail
+settings on every launch.
+
+Dear ImGui renders on the main OpenGL context. Normal settings do not
+write PlayStation RAM or VRAM; the Cheats tab is isolated behind narrow,
+version-pinned gameplay APIs with its save effects stated above. Configure with
+`-DDISRUPTOR_DEV_MENU=OFF` to omit the menu and its integrity-pinned Dear ImGui
+dependency.
+
+### Suspended draw-distance experiment
+
+The following records the earlier experiment; its controls are no longer
+available in the settings menu.
 
 The draw-distance experiment substitutes the values returned by thirteen exact,
 version-pinned renderer loads. It never changes the game's authoritative
 draw/fade globals, so memory-card data and savestates retain the retail values;
 loading a savestate only abandons the in-progress diagnostic sample. The two
 setup loads that feed guest stores, and unrelated gameplay loads of the same
-globals, are deliberately excluded. This remains a live-validation feature:
+globals, are deliberately excluded. The experiment still needs broader validation:
 larger presets can expose level voids, portal/culling omissions, inactive
-distant actors, primitive-packet pressure, or increased frame time. Start with
-1.25x on a repeatable view and use 1.5x only after the lower preset is clean.
+distant actors, primitive-packet pressure, or increased frame time. Earlier testing used
+1.25x on a repeatable view and 1.5x only after the lower preset was clean.
 The first live 1.5x diagnostic captured source/effective far `1024 / 1536`,
 source/effective fade start `256 / 768`, and 39,421 substitutions over 679
 completed frames. A later fixed-view A/B proved that the extension changed
@@ -268,34 +292,6 @@ terrain palette/visibility path is therefore unresolved and is intentionally
 parked while camera feel and gameplay cadence are addressed. A missed live
 billboard CLUT-row pass was subsequently added to the distance-shading
 override.
-
-God Mode intercepts the game's central player-damage routine without changing
-saved health; it starts off on every launch. **Grant all weapons + psionics**
-also refills their resources and deliberately reproduces the retail cheat
-consequence: the current game is marked as cheated, which changes the ending
-message and is carried into subsequent memory-card/password saves. The menu
-requires confirmation before applying that irreversible gameplay action.
-
-Reviewed live settings are persisted in the user-owned `settings.toml` beside
-the executable (the development build uses `build/settings.toml`). Saves merge
-only fields changed in the menu and publish through an atomic replacement, so
-an I/O failure leaves the previous file intact. Explicit launch switches or
-environment values override saved preferences for that run. Mouse aim, modern
-controls, vertical-look enablement, both axis sensitivities/inversion,
-sub-byte camera, display aspect, internal resolution, window mode, exact
-geometry, perspective textures and VSync persist; the current pitch does not.
-The interpolator remembers target/blend but its
-activation remains session-only because its current crossfade is too blurry
-for release. Menu layout/open state, mouse capture and diagnostics never
-persist. Experimental draw distance and distance shading also return to retail
-settings on every launch.
-
-The overlay suspends the secondary interpolation presenter while visible so
-Dear ImGui always renders on the main OpenGL context. Normal settings do not
-write PlayStation RAM or VRAM; the Cheats tab is isolated behind narrow,
-version-pinned gameplay APIs with its save effects stated above. Configure with
-`-DDISRUPTOR_DEV_MENU=OFF` to omit the menu and its integrity-pinned Dear ImGui
-dependency.
 
 ## Mouse implementation
 
@@ -331,7 +327,8 @@ psionic, Q/R weapon/psionic selection, Tab map, P pause, left mouse fire, and
 right mouse psionic. Arrow keys and Enter remain menu fallbacks. Mouse actions
 only reach the game while the mouse is captured.
 
-Menu pointer support is still deferred.
+The released pointer operates the host settings menu and is consumed before it
+can reach gameplay.
 
 ## Gameplay frame cadence
 
@@ -356,6 +353,91 @@ double-buffering, scripted modes, CD/audio scheduling and special branches may
 assume the retail batching. The next phase will count VBlanks, gameplay ticks,
 yaw stores, renderer entries, display-base flips and dirty presents over a
 fixed 600-VBlank window before enabling that experimental patch.
+
+## Experimental geometry inter-frame interpolation
+
+Frame interpolation is deactivated for now. Disruptor builds define
+`PSX_DISABLE_FRAME_INTERPOLATION=1`, which omits the interpolation shaders,
+history textures, temporal capture and worker. Settings, environment overrides
+and mod APIs cannot activate it, including with `DISRUPTOR_DEV_MENU=OFF`.
+Software smoothing and frame blending are also disabled. The interpolation
+controls, saved preference updates and related debug statistics are removed
+from the menu. The Diagnostics tab and other experimental probes have also
+been removed for public-build preparation.
+
+The experimental source and deterministic math tests are retained for future
+work. The following describes the suspended implementation.
+
+The renderer retains world triangles from successive source frames and redraws
+world geometry at intermediate screen positions. The HUD stays sharp at its
+current position. Conservative triangle matches seed previous vertex positions
+after checks on material, correspondence, motion, shape and depth continuity.
+The repair shares that motion across neighboring current triangles, including
+neighbors without a complete triangle match. Adjacency uses exact current
+screen coordinates and independent, unnormalized GTE depth; the texture
+shader's per-polygon normalized reciprocal depth stays separate. This prevents
+different texture-depth scales from splitting an otherwise shared vertex.
+
+Conflicting motion candidates hold the shared vertex at its current position
+across all adjoining triangles. Triangle-safety failures propagate that hold
+through shared vertices so neighboring triangles keep the same edge positions.
+Tiny or ineligible world faces also anchor their shared vertices. Ambiguity
+and depth-bridge checks prevent unknown-depth connections from joining
+incompatible known-depth groups. For a recognized T-junction, two edges A-M
+and M-B meet a longer A-B edge; the guard locally anchors A, M and B after
+confirming position and depth agreement. The check applies to vertices with at
+most 16 neighbors and preserves the original real-frame positions. Unsafe scenes fall
+back to the current completed frame.
+
+These guards can leave some geometry unsmoothed. Primitives without world
+provenance (`world == 0`), unrecognized T-junctions and clipping transitions
+remain potential limitations. A broader live retest is still needed before
+claiming that all reported seams are resolved.
+
+This is presentation geometry interpolation, not full game-state, camera or
+object simulation interpolation. Simulation, input and audio keep their
+existing cadence. Interpolated world motion adds about one source-frame of
+visual delay, so it does not solve the retail gameplay/render batching
+described above. Legacy **Linear crossfade** and **Motion-adaptive clarity**
+blend completed images and can ghost; they are also deactivated in the current
+Disruptor build.
+
+The suspended implementation used `PSX_GL_INTERP_DIAG=1` to log capture and
+presentation cadence plus geometry scene counts, redraws, fallback captures
+and matched world triangles. This override is inactive in the current build. Mesh
+diagnostics also report moving triangles, seeded/shared vertices, propagated
+corners, conflicts, held vertices and anchored T-junctions. A high presentation
+rate alone does not show how much world geometry is being interpolated; use
+those counters alongside a repeatable live visual check.
+
+Replaying a captured moving Mission 1 scene through the final repair covered
+1,338 world triangles and 778 groups of shared screen-position/depth vertices.
+At `alpha=0.5`, the original independent triangle motion split 405 groups by
+more than one native pixel, with a maximum gap of 14.728902 pixels. The repair
+produced zero gaps within those shared groups. Five depth-confirmed T-junctions
+checked at `alpha=0.25`, `0.5` and `0.75` retained only their original real-frame
+deviation, at most 0.009517 native pixels, with zero added gap. In that snapshot,
+642 triangles retained motion and 504 unmatched corners received shared motion.
+
+An independent capture from the final live run contained 1,324 world triangles
+and 774 shared groups. Its 399 groups split by more than one native pixel in
+the baseline (max 12.13705 pixels) also became zero shared-group gaps. Four
+depth-confirmed T-junctions had zero added gap; their original real-frame
+deviation was at most 0.009456 native pixels.
+
+The final Mission 1 run at 4x internal resolution and a 120 FPS target included
+turning and forward movement. Ordinary intervals recorded 29.95-30.15 scene
+captures/s and 120 presentations/s, with a guest frame interval averaging
+16.684 ms and zero sampled GL errors. The bounded diagnostic readback interval
+averaged 118.94 presentations/s. Final `alpha=1` endpoint comparisons each
+found 1 of 1,228,800 RGB pixels with a channel delta greater than 1, with a
+maximum channel delta of 7 and no GL error. That small raster difference remains;
+the result is not bit-exact. Endpoint comparisons alone cannot establish
+artifact-free intermediate frames or replace the pending broader visual retest.
+
+The suspended implementation also used `PSX_GL_TEMPORAL_VERIFY=1` for three
+expensive GPU endpoint readback comparisons. This probe is inactive in the
+current build.
 
 ## Widescreen implementation
 

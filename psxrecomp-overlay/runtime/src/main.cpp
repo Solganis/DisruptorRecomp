@@ -43,6 +43,7 @@ extern "C" void psx_event_step_conservative_env_init(void);
 #include "gpu_gl_renderer.h"
 #include "gpu_vk_renderer.h"
 #include "host_ui.h"
+extern "C" void gl_renderer_geometry_interpolation_diag(uint64_t out[6]);
 #include "gte_precision.h"
 #include "frame_pacing.h"
 #include "latency_ring.h"
@@ -606,6 +607,7 @@ extern "C" void psx_host_ui_render_gl(int drawable_width,
 
 /* Presentation-only interpolation for software-rendered content that repeats
  * each guest image for two vblanks. This never changes guest or audio timing. */
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
 static std::atomic<int> g_smooth_60fps{0};
 
 struct Smooth60State {
@@ -619,6 +621,7 @@ struct Smooth60State {
 };
 
 static Smooth60State g_smooth_60_state;
+#endif
 
 /* Present-path session state — must reset on rematch (function-local statics
  * survive soft-return and poison FMV/FPS after session_reboot). */
@@ -646,12 +649,14 @@ static bool fps_telemetry_enabled() {
 }
 
 static void smooth_60_reset(void) {
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
     g_smooth_60_state.previous_source.clear();
     g_smooth_60_state.source_hash = 0;
     g_smooth_60_state.width = 0;
     g_smooth_60_state.height = 0;
     g_smooth_60_state.have_source = false;
     g_smooth_60_state.previous_was_duplicate = false;
+#endif
 }
 
 static void present_session_reset(void) {
@@ -691,6 +696,7 @@ extern "C" void psx_frontend_on_savestate_loaded(void) {
     gl_renderer_invalidate_present();
 }
 
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
 static uint64_t smooth_60_frame_hash(const uint32_t* pixels, size_t count) {
     uint64_t hash = 1469598103934665603ull;
     const size_t step = std::max<size_t>(1, count / 4096u);
@@ -774,6 +780,13 @@ static void smooth_60_present(uint32_t* pixels, uint32_t width, uint32_t height,
 extern "C" void psx_smooth_60fps_set(int enabled) {
     g_smooth_60fps.store(enabled ? 1 : 0, std::memory_order_release);
 }
+#else
+static void smooth_60_present(uint32_t* pixels, uint32_t width, uint32_t height,
+                              bool eligible) {
+    (void)pixels; (void)width; (void)height; (void)eligible;
+}
+extern "C" void psx_smooth_60fps_set(int enabled) { (void)enabled; }
+#endif
 #if defined(PSX_WEB)
 extern "C" EMSCRIPTEN_KEEPALIVE void psx_web_set_smooth_60fps(int enabled) {
     psx_smooth_60fps_set(enabled);
@@ -871,10 +884,17 @@ static int           g_low_latency_input = 1;
 static int           g_video_vsync        = 1;
 static int           g_frame_interpolation = 0;
 static int           g_frame_interpolation_fps = 0;
+#if defined(DISRUPTOR_DEV_MENU)
+static int           g_frame_interpolation_blend =
+    PSX_HOST_FRAME_INTERPOLATION_GEOMETRY;
+static int           g_frame_interpolation_blend_default =
+    PSX_HOST_FRAME_INTERPOLATION_GEOMETRY;
+#else
 static int           g_frame_interpolation_blend =
     PSX_MOD_FRAME_INTERPOLATION_LINEAR;
 static int           g_frame_interpolation_blend_default =
     PSX_MOD_FRAME_INTERPOLATION_LINEAR;
+#endif
 static int           g_mod_controller_mode_override[2] = { -1, -1 };
 static_assert((int)PSX_MOD_CONTROLLER_HYBRID ==
               (int)PSXRecompV4::PAD_MODE_HYBRID);
@@ -1178,6 +1198,10 @@ extern "C" int psx_mod_set_native_vblank_rate(
 
 extern "C" int psx_mod_set_frame_interpolation(
     uint32_t frames_per_second) {
+#ifdef PSX_DISABLE_FRAME_INTERPOLATION
+    (void)frames_per_second;
+    return 0;
+#else
     if (frames_per_second != 0 &&
         (frames_per_second < 60 || frames_per_second > 1000)) {
         std::fprintf(stderr,
@@ -1208,10 +1232,15 @@ extern "C" int psx_mod_set_frame_interpolation(
             "interpolation; guest timing remains stock\n");
     }
     return 1;
+#endif
 }
 
 extern "C" int psx_mod_set_frame_interpolation_blend(
     uint32_t blend_mode) {
+#ifdef PSX_DISABLE_FRAME_INTERPOLATION
+    (void)blend_mode;
+    return 0;
+#else
     if (blend_mode != PSX_MOD_FRAME_INTERPOLATION_LINEAR &&
         blend_mode != PSX_MOD_FRAME_INTERPOLATION_MOTION_ADAPTIVE) {
         std::fprintf(stderr,
@@ -1224,6 +1253,7 @@ extern "C" int psx_mod_set_frame_interpolation_blend(
         blend_mode == PSX_MOD_FRAME_INTERPOLATION_MOTION_ADAPTIVE
             ? "motion-adaptive clarity" : "linear crossfade");
     return 1;
+#endif
 }
 
 extern "C" int psx_mod_set_auto_skip_fmv(int enabled) {
@@ -1498,6 +1528,11 @@ extern "C" int psx_host_video_set_vsync(int mode) {
 extern "C" void psx_host_video_get_interpolation(int *enabled,
                                                    int *target_fps,
                                                    int *blend_mode) {
+#ifdef PSX_DISABLE_FRAME_INTERPOLATION
+    if (enabled) *enabled = 0;
+    if (target_fps) *target_fps = 0;
+    if (blend_mode) *blend_mode = PSX_HOST_FRAME_INTERPOLATION_LINEAR;
+#else
     int actual_enabled = g_frame_interpolation ? 1 : 0;
     if (g_gl_active)
         gl_renderer_interpolation_diag(&actual_enabled, nullptr, nullptr,
@@ -1505,22 +1540,39 @@ extern "C" void psx_host_video_get_interpolation(int *enabled,
     if (enabled) *enabled = actual_enabled;
     if (target_fps) *target_fps = g_frame_interpolation_fps;
     if (blend_mode) *blend_mode = g_frame_interpolation_blend;
+#endif
+}
+
+extern "C" void psx_host_video_get_geometry_interpolation_stats(
+    uint64_t out[6]) {
+    if (!out) return;
+    for (int i = 0; i < 6; ++i) out[i] = 0;
+    if (g_gl_active) gl_renderer_geometry_interpolation_diag(out);
 }
 
 extern "C" int psx_host_video_set_interpolation(int enabled,
                                                   int target_fps,
                                                   int blend_mode) {
+#ifdef PSX_DISABLE_FRAME_INTERPOLATION
+    (void)target_fps; (void)blend_mode;
+    /* A disable request is harmless; activation is unavailable in this build. */
+    return enabled ? 0 : 1;
+#else
     enabled = enabled ? 1 : 0;
     if (target_fps != -1 && target_fps != 0 &&
         (target_fps < 60 || target_fps > 1000))
         return 0;
     if (blend_mode != PSX_MOD_FRAME_INTERPOLATION_LINEAR &&
-        blend_mode != PSX_MOD_FRAME_INTERPOLATION_MOTION_ADAPTIVE)
+        blend_mode != PSX_MOD_FRAME_INTERPOLATION_MOTION_ADAPTIVE &&
+        blend_mode != PSX_HOST_FRAME_INTERPOLATION_GEOMETRY)
         return 0;
     /* Interpolation is implemented only by the GL backend and renderer changes
      * are restart-owned.  Do not let an in-game control advertise success on a
      * software/Vulkan session. */
     if (enabled && !g_gl_active) return 0;
+    if (enabled && blend_mode == PSX_HOST_FRAME_INTERPOLATION_GEOMETRY &&
+        !gpu_geometry_correction_enabled())
+        return 0;
 
     if (g_gl_active) {
         int previous_actual = 0;
@@ -1554,6 +1606,7 @@ extern "C" int psx_host_video_set_interpolation(int enabled,
     g_frame_interpolation_fps = target_fps;
     g_frame_interpolation_blend = blend_mode;
     return 1;
+#endif
 }
 
 /* Present straight from the FBO (fast, no readback). Set PSX_GL_FORCE_CPU_PRESENT=1
@@ -1593,6 +1646,16 @@ static int g_turbo_load_wall_multiplier = 0;
 static int g_turbo_load_release_frames = TURBO_LOADS_RELEASE_FRAMES;
 static SDL_AudioDeviceID sdl_audio_device;
 static int16_t       sdl_audio_buf[2048 * 2];
+static std::atomic<int> g_audio_master_volume_percent{100};
+static std::atomic<int> g_audio_master_muted{0};
+/* Legacy queued audio has two producer sites (ordinary pump and turbo-mute
+ * tail); both share the same applied gain so either path transitions smoothly. */
+static float g_audio_legacy_applied_master_gain = -1.0f;
+/* Callback-owned; reset only after the audio device has stopped. */
+static float g_audio_drc_applied_master_gain = -1.0f;
+
+static void sdl_audio_apply_master_gain(int16_t* buf, int frames,
+                                        float* applied_gain);
 
 /* DRC bridge. Producer (sdl_audio_pump) runs on the main loop thread under
  * SDL_LockAudioDevice; consumer (sdl_drc_callback) runs on the SDL audio
@@ -1625,10 +1688,36 @@ extern "C" {
 int g_audio_host_rate = 44100;
 }
 
+extern "C" int psx_host_audio_get_master_volume(void) {
+    return g_audio_master_volume_percent.load(std::memory_order_relaxed);
+}
+
+extern "C" int psx_host_audio_set_master_volume(int percent) {
+    if (percent < 0 || percent > 100) return 0;
+    g_audio_master_volume_percent.store(percent, std::memory_order_relaxed);
+    return 1;
+}
+
+extern "C" int psx_host_audio_get_muted(void) {
+    return g_audio_master_muted.load(std::memory_order_relaxed);
+}
+
+extern "C" int psx_host_audio_set_muted(int muted) {
+    if (muted != 0 && muted != 1) return 0;
+    g_audio_master_muted.store(muted, std::memory_order_relaxed);
+    return 1;
+}
+
 static void sdl_drc_callback(void* /*user*/, Uint8* stream, int len) {
     if (!s_drc_ready) { std::memset(stream, 0, (size_t)len); return; }
     int frames = len / (int)(2 * sizeof(int16_t)); /* stereo S16 */
     rab_pull(&s_drc, reinterpret_cast<int16_t*>(stream), frames);
+    /* Apply user gain at the final pull boundary so the default bridge path
+     * responds on the next device callback instead of waiting for the DRC
+     * ring's buffered audio to drain. */
+    sdl_audio_apply_master_gain(
+        reinterpret_cast<int16_t*>(stream), frames,
+        &g_audio_drc_applied_master_gain);
     /* T3 tap in bridge mode: the exact device-rate bytes the host consumes.
      * This callback is the tap's single writer while the bridge is active. */
     audio_trace_pcm(AUDIO_TAP_HOST, reinterpret_cast<const int16_t*>(stream),
@@ -2209,6 +2298,8 @@ static void shutdown_runtime(void) {
         psx_sdl_audio_close(sdl_audio_device);   /* stops the pull callback */
         sdl_audio_device = 0;
     }
+    g_audio_drc_applied_master_gain = -1.0f;
+    g_audio_legacy_applied_master_gain = -1.0f;
     if (s_drc_ready) { rab_free(&s_drc); s_drc_ready = false; }
     close_controller();
     debug_server_shutdown();
@@ -2226,6 +2317,8 @@ static void teardown_game_session_keep_lobby(void) {
         psx_sdl_audio_close(sdl_audio_device);
         sdl_audio_device = 0;
     }
+    g_audio_drc_applied_master_gain = -1.0f;
+    g_audio_legacy_applied_master_gain = -1.0f;
     if (s_drc_ready) { rab_free(&s_drc); s_drc_ready = false; }
     close_controller();
     if (g_vk_active) {
@@ -2255,6 +2348,24 @@ static void sdl_audio_gain_ramp(int16_t* buf, int frames, float g0, float g1) {
         buf[f * 2 + 0] = (int16_t)((float)buf[f * 2 + 0] * g);
         buf[f * 2 + 1] = (int16_t)((float)buf[f * 2 + 1] * g);
     }
+}
+
+/* Smooth live master-volume changes over one produced/device block. The DRC
+ * path invokes this on its final audio callback; legacy queued audio invokes
+ * it immediately before queueing. Separate per-path applied gains are owned by
+ * their respective threads, while the requested controls are atomic. */
+static void sdl_audio_apply_master_gain(int16_t* buf, int frames,
+                                        float* applied_gain) {
+    if (!buf || frames <= 0 || !applied_gain) return;
+    const int percent =
+        g_audio_master_volume_percent.load(std::memory_order_relaxed);
+    const bool muted =
+        g_audio_master_muted.load(std::memory_order_relaxed) != 0;
+    const float target_gain = muted ? 0.0f : (float)percent / 100.0f;
+    if (*applied_gain < 0.0f) *applied_gain = target_gain;
+    if (*applied_gain == 1.0f && target_gain == 1.0f) return;
+    sdl_audio_gain_ramp(buf, frames, *applied_gain, target_gain);
+    *applied_gain = target_gain;
 }
 
 /* Fade-in state: samples of rising ramp still to apply after an unmute.
@@ -2355,6 +2466,8 @@ static void sdl_audio_pump(bool discard_output = false) {
         sdl_audio_fadein_left -= ramp;
     }
     if (legacy) {
+        sdl_audio_apply_master_gain(
+            sdl_audio_buf, frames, &g_audio_legacy_applied_master_gain);
         /* T3 tap: the exact post-fade bytes handed to the host audio queue. */
         audio_trace_pcm(AUDIO_TAP_HOST, sdl_audio_buf, frames);
         psx_sdl_audio_queue(sdl_audio_device, sdl_audio_buf,
@@ -2821,6 +2934,9 @@ static void sdl_audio_update(int hard_mute_active, int turbo_sink_active) {
             sdl_audio_gain_ramp(sdl_audio_buf, tail, g0, 0.0f);
             audio_trace_event(AUDIO_EV_MUTE, (uint32_t)tail, 0);
             if (audio_legacy_mode()) {
+                sdl_audio_apply_master_gain(
+                    sdl_audio_buf, tail,
+                    &g_audio_legacy_applied_master_gain);
                 audio_trace_pcm(AUDIO_TAP_HOST, sdl_audio_buf, tail);
                 psx_sdl_audio_queue(sdl_audio_device, sdl_audio_buf,
                                     (uint32_t)tail * sizeof(int16_t) * 2u);
@@ -4897,6 +5013,7 @@ static void sdl_vblank_present(void) {
                           h * (uint32_t)active_scale,
                           !g_gl_active && !g_vk_active && !di.depth24 && !fmv_frame);
 
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
         /* Frame blending (CRT-persistence masker for 30fps double-buffered
          * content). Some games (e.g. Crash Bash menus/characters) leave a
          * dynamic object in only one of the two display buffers per 30fps cycle,
@@ -4938,6 +5055,7 @@ static void sdl_vblank_present(void) {
                 }
             }
         }
+#endif
     }
 
     /* Update only the active display rectangle. The backing texture is sized
@@ -5804,7 +5922,11 @@ int main(int argc, char** argv) {
     bool ws_offered = true; /* game.toml [widescreen] offer; false hides the launcher toggle + clamps 4:3 */
     bool ws_ultrawide_offered = false;
     bool ws_adaptive_view_supported = false;
+#ifdef PSX_DISABLE_FRAME_INTERPOLATION
+    bool frame_interpolation_offered = false;
+#else
     bool frame_interpolation_offered = true;
+#endif
     bool skip_fmv_offered = true;
     bool turbo_loads_offered = true;
     bool vulkan_offered = false; /* game.toml [video] offer_vulkan; developer opt-in for launcher visibility */
@@ -5901,8 +6023,10 @@ int main(int argc, char** argv) {
             g_video_aspect_den = gc.runtime.video_aspect_den;
             g_low_latency_input = gc.runtime.video_low_latency_input ? 1 : 0;
             g_video_vsync       = gc.runtime.video_vsync;
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
             g_frame_interpolation = gc.runtime.video_frame_interpolation ? 1 : 0;
             g_frame_interpolation_fps = gc.runtime.video_frame_interpolation_fps;
+#endif
             g_fmv_skip_total_table = gc.runtime.video_fmv_skip_total_table;
             g_fmv_skip_movie_id    = gc.runtime.video_fmv_skip_movie_id;
             if (gc.runtime.video_fmv_skip_end_total)
@@ -6066,8 +6190,10 @@ int main(int argc, char** argv) {
             ws_offered = gc.ws_offered;
             ws_ultrawide_offered = gc.ws_ultrawide_offered;
             ws_adaptive_view_supported = gc.ws_adaptive_view;
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
             frame_interpolation_offered =
                 gc.runtime.video_offer_frame_interpolation;
+#endif
             skip_fmv_offered = gc.runtime.video_offer_skip_fmv;
             turbo_loads_offered = gc.runtime.offer_turbo_loads;
             vulkan_offered = gc.vulkan_offered;
@@ -6410,6 +6536,10 @@ int main(int argc, char** argv) {
         }
         if (us.has_adaptive_view) g_ws_adaptive_view = us.adaptive_view;
         if (us.has_spu_hq)         g_audio_spu_hq    = us.spu_hq;
+        if (us.has_master_volume)
+            (void)psx_host_audio_set_master_volume(us.master_volume);
+        if (us.has_audio_muted)
+            (void)psx_host_audio_set_muted(us.audio_muted ? 1 : 0);
         /* Bundled BIOS: ignore any persisted bios_path (same clamp-as-well-
          * as-hide treatment as lock_mode / ws_offered below) so a stale
          * settings.toml or launcher-less build can never point a bundled
@@ -6444,10 +6574,11 @@ int main(int argc, char** argv) {
         if (us.has_deadzone)  resolved_deadzone = us.deadzone;
         if (us.has_low_latency_input) g_low_latency_input = us.low_latency_input ? 1 : 0;
         if (us.has_vsync)             g_video_vsync       = us.vsync;
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
 #if defined(DISRUPTOR_DEV_MENU)
         /* Disruptor's in-game menu deliberately treats interpolation
-         * activation as session-only: the current temporal crossfade is too
-         * blurry for a release default.  A legacy settings.toml may still
+         * activation as session-only while geometry interpolation is
+         * experimental. A legacy settings.toml may still
          * contain frame_interpolation=true from the generic launcher, but this
          * game does not auto-restore it.  The explicit environment below
          * remains available for one-run A/B testing. */
@@ -6458,11 +6589,21 @@ int main(int argc, char** argv) {
 #endif
         if (us.has_frame_interpolation_fps)
             g_frame_interpolation_fps = us.frame_interpolation_fps;
+#if defined(DISRUPTOR_DEV_MENU)
+        /* Migrate legacy image-blend preferences to geometry at startup.
+         * Explicit environment selection below can still opt into legacy
+         * modes for one-run comparisons. */
+        g_frame_interpolation_blend_default =
+            PSX_HOST_FRAME_INTERPOLATION_GEOMETRY;
+        g_frame_interpolation_blend = g_frame_interpolation_blend_default;
+#else
         if (us.has_frame_interpolation_blend) {
             g_frame_interpolation_blend_default =
                 us.frame_interpolation_blend;
             g_frame_interpolation_blend = us.frame_interpolation_blend;
         }
+#endif
+#endif
         if (us.has_geometry_correction)
             g_geometry_correction = us.geometry_correction;
         if (us.has_perspective_textures)
@@ -6574,7 +6715,7 @@ int main(int argc, char** argv) {
      * PSX_VIDEO_ASPECT=4:3|16:9|21:9|32:9;
      * PSX_LOW_LATENCY_INPUT=0/1 ; PSX_VSYNC=1(vsync)/0(immediate)/-1(adaptive);
      * PSX_FRAME_INTERPOLATION=0/1; PSX_FRAME_INTERPOLATION_FPS=0|60+;
-     * PSX_FRAME_INTERPOLATION_BLEND=linear|adaptive. */
+     * PSX_FRAME_INTERPOLATION_BLEND=geometry|linear|adaptive. */
     if (const char *e = std::getenv("PSX_VIDEO_ASPECT")) {
         int numerator = 0;
         int denominator = 0;
@@ -6610,6 +6751,7 @@ int main(int argc, char** argv) {
         g_geometry_correction = atoi(e) ? true : false;
     if (const char *e = std::getenv("PSX_TEXTURE_CORRECTION"))
         g_texture_correction = atoi(e) ? true : false;
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION"))
         g_frame_interpolation = atoi(e) ? 1 : 0;
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_FPS")) {
@@ -6617,7 +6759,10 @@ int main(int argc, char** argv) {
         if (fps == 0 || fps >= 60) g_frame_interpolation_fps = fps;
     }
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_BLEND")) {
-        if (strcmp(e, "adaptive") == 0 || strcmp(e, "clarity") == 0 ||
+        if (strcmp(e, "geometry") == 0 || strcmp(e, "2") == 0) {
+            g_frame_interpolation_blend_default =
+                PSX_HOST_FRAME_INTERPOLATION_GEOMETRY;
+        } else if (strcmp(e, "adaptive") == 0 || strcmp(e, "clarity") == 0 ||
             strcmp(e, "1") == 0) {
             g_frame_interpolation_blend_default =
                 PSX_MOD_FRAME_INTERPOLATION_MOTION_ADAPTIVE;
@@ -6627,6 +6772,7 @@ int main(int argc, char** argv) {
         }
         g_frame_interpolation_blend = g_frame_interpolation_blend_default;
     }
+#endif
     {
         const char *mode_env = std::getenv("PSX_PARAPPA_TIMING_MODE");
         const char *early_env = std::getenv("PSX_PARAPPA_TIMING_EXTRA_EARLY");
@@ -7239,6 +7385,12 @@ int main(int argc, char** argv) {
     g_turbo_load_release_frames = TURBO_LOADS_RELEASE_FRAMES;
     if (!turbo_loads_offered)
         g_turbo_loads_enabled = 0;
+#ifdef PSX_DISABLE_FRAME_INTERPOLATION
+    /* Clamp each runtime session after configuration and launcher selection.
+     * Legacy settings and environment variables cannot revive this feature. */
+    g_frame_interpolation = 0;
+    g_frame_interpolation_fps = 0;
+#endif
     g_frame_interpolation_blend = g_frame_interpolation_blend_default;
     mod_runtime_activate_plugins();
     if (g_mod_controller_mode_override[0] >= 0)

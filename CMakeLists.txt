@@ -14,7 +14,7 @@ set(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp" CACHE PATH
     "Path to the pinned PSXRecomp checkout")
 
 option(DISRUPTOR_DEV_MENU
-    "Build the in-game Disruptor settings and diagnostics menu"
+    "Build the in-game Disruptor settings menu"
     ON)
 
 set(DISRUPTOR_EXTRA_SOURCES
@@ -23,6 +23,7 @@ set(DISRUPTOR_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_control_probe.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_far_rendering.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_mouse_aim.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_render_arena.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_vertical_camera.cpp")
 
 # The project deliberately uses the redistributable OpenBIOS backend only.
@@ -105,6 +106,9 @@ psxrecomp_add_runtime_target(psx-runtime
     EXE_NAME "DisruptorRecompiled"
 )
 target_compile_definitions(psx-runtime PRIVATE
+    # Keep the experimental sources available, but compile out frame blending,
+    # temporal capture and the high-refresh presenter for this title for now.
+    PSX_DISABLE_FRAME_INTERPOLATION=1
     PSX_HAS_DISRUPTOR_BILLBOARD_ASPECT=1
     PSX_HAS_DISRUPTOR_FAR_RENDERING=1
     PSX_HAS_DISRUPTOR_VERTICAL_CAMERA=1)
@@ -209,6 +213,13 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         "${PSXRECOMP_ROOT}/runtime/include")
     target_compile_features(disruptor-far-rendering-test PRIVATE cxx_std_17)
 
+    add_executable(disruptor-render-arena-test
+        tests/disruptor_render_arena_test.cpp)
+    target_include_directories(disruptor-render-arena-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-render-arena-test PRIVATE cxx_std_17)
+    add_test(NAME disruptor_render_arena COMMAND disruptor-render-arena-test)
+
     add_executable(disruptor-billboard-aspect-test
         tests/disruptor_billboard_aspect_test.cpp)
     target_include_directories(disruptor-billboard-aspect-test PRIVATE
@@ -220,6 +231,22 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_include_directories(disruptor-gpu-ws-tag-match-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
     target_compile_features(disruptor-gpu-ws-tag-match-test PRIVATE cxx_std_17)
+
+    add_executable(disruptor-gpu-temporal-match-test
+        tests/gpu_temporal_match_test.cpp)
+    target_include_directories(disruptor-gpu-temporal-match-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-temporal-match-test PRIVATE cxx_std_17)
+    add_test(NAME disruptor_gpu_temporal_match
+        COMMAND disruptor-gpu-temporal-match-test)
+
+    add_executable(disruptor-gpu-temporal-mesh-test
+        tests/gpu_temporal_mesh_test.cpp)
+    target_include_directories(disruptor-gpu-temporal-mesh-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-temporal-mesh-test PRIVATE cxx_std_17)
+    add_test(NAME disruptor_gpu_temporal_mesh
+        COMMAND disruptor-gpu-temporal-mesh-test)
 
     add_executable(disruptor-presentation-yaw-math-test
         tests/presentation_yaw_math_test.cpp)

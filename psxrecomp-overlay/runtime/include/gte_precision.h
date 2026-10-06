@@ -58,6 +58,8 @@ int gte_precision_load_word(uint32_t addr, uint32_t packed,
 void gte_precision_word_write_begin(void);
 void gte_precision_main_ram_word_committed(uint32_t physical);
 void gte_precision_scratch_word_committed(uint32_t physical);
+/* Allocated enhancement packet memory uses a distinct physical-address domain. */
+void gte_precision_gpu_dma_word_committed(uint32_t physical);
 void gte_precision_store_word(uint32_t addr, uint8_t reg);
 void gte_precision_invalidate_word(uint32_t addr);
 

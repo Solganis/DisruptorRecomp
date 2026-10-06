@@ -11,7 +11,7 @@
  * provider every function is a cheap no-op and the normal frontend is
  * unchanged.
  *
- * Callbacks and the live video setting functions are main-thread only.  The
+ * Callbacks and the live setting functions are main-thread only.  The
  * runtime copies the table during registration, so the caller does not need to
  * keep the PsxHostUiHooks object alive.  `userdata` remains caller-owned.
  */
@@ -91,16 +91,24 @@ int psx_host_ui_game_input_captured(void);
  * launcher without making it rediscover platform/AppImage path rules. */
 const char *psx_host_user_settings_path(void);
 
+enum PsxHostFrameInterpolationMode {
+    PSX_HOST_FRAME_INTERPOLATION_LINEAR = 0,
+    PSX_HOST_FRAME_INTERPOLATION_MOTION_ADAPTIVE = 1,
+    PSX_HOST_FRAME_INTERPOLATION_GEOMETRY = 2,
+};
+
 /* Live, session-only video controls.  Persistence belongs to the game UI.
  * Display aspect changes are queued for the next presentation boundary; the
  * fixed choices are 4:3, 16:9, 21:9, and 32:9. Adaptive view follows the live
  * window aspect between 4:3 and 32:9. Selecting a fixed aspect disables it.
- * Internal scale accepts 1..4 and is currently live only on OpenGL.
+ * Internal scale accepts 1..8 and is currently live only on OpenGL.
  * Fullscreen mode accepts 0 (windowed), 1 (borderless desktop), or 2
  * (exclusive). Vsync accepts -1 (adaptive), 0 (immediate), or 1
  * (synchronised). Interpolation target accepts -1 (uncapped), 0 (display
- * refresh), or 60..1000 FPS; blend accepts 0 (linear) or 1
- * (motion-adaptive). */
+ * refresh), or 60..1000 FPS; blend accepts PsxHostFrameInterpolationMode.
+ * Geometry mode redraws matched world triangles between source frames and
+ * requires exact-provenance geometry; enabling it never changes that setting.
+ * Activation remains session-only. */
 void psx_host_video_get_display_aspect(int *numerator, int *denominator);
 int psx_host_video_set_display_aspect(int numerator, int denominator);
 int psx_host_video_get_adaptive_view(void);
@@ -115,6 +123,19 @@ void psx_host_video_get_interpolation(int *enabled, int *target_fps,
                                       int *blend_mode);
 int psx_host_video_set_interpolation(int enabled, int target_fps,
                                      int blend_mode);
+/* Geometry interpolation diagnostics: published scenes, redraws, fallback
+ * captures, last captured scene's matched triangles and world triangles, and
+ * last captured scene replayable (0/1). Capture diagnostics survive host UI
+ * suspension. Non-OpenGL sessions return six zeros. */
+void psx_host_video_get_geometry_interpolation_stats(uint64_t out[6]);
+
+/* Live host-output audio controls. Volume accepts 0..100 percent. Muting is a
+ * separate latch so unmuting restores the selected volume. Both operate after
+ * the emulated SPU mix and therefore leave guest audio state untouched. */
+int psx_host_audio_get_master_volume(void);
+int psx_host_audio_set_master_volume(int percent);
+int psx_host_audio_get_muted(void);
+int psx_host_audio_set_muted(int muted);
 
 /* Runtime-internal dispatch entry points.  Renderer/front-end code uses these
  * to keep the optional provider out of the core presentation implementation. */

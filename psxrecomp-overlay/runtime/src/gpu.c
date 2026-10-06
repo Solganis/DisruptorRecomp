@@ -1708,7 +1708,7 @@ void gpu_ws_configure(int aspect_num, int aspect_den,
 
 static void ws_tag_primitive(uint32_t primitive_addr, int32_t anchor_x,
                              uint32_t signature, int content_validated) {
-    uint32_t key = primitive_addr & 0x1FFFFCu;
+    uint32_t key = psx_mod_gpu_dma_resolve_address(primitive_addr);
     if (!key) return;
     uint32_t now = (uint32_t)s_frame_count;
     uint32_t idx = (key >> 2) & (WS_TAG_BUCKETS - 1);
@@ -1774,7 +1774,8 @@ static int ws_tagged_anchor(int32_t *out_ax) {
     if (!ws_active() || gp0_cmd_source_addr == 0xFFFFFFFFu) return 0;
     uint32_t now = (uint32_t)s_frame_count;
     for (int variant = 0; variant < 2; variant++) {
-        uint32_t key = (gp0_cmd_source_addr - (variant ? 0u : 4u)) & 0x1FFFFCu;
+        uint32_t key = psx_mod_gpu_dma_resolve_address(
+            gp0_cmd_source_addr - (variant ? 0u : 4u));
         uint32_t idx = (key >> 2) & (WS_TAG_BUCKETS - 1);
         for (int i = 0; i < WS_TAG_PROBES; i++) {
             WsTag *t = &ws_tags[(idx + i) & (WS_TAG_BUCKETS - 1)];
@@ -1911,7 +1912,8 @@ int psx_ws_prim_is_tagged(void) {
     if (!ws_engaged() || gp0_cmd_source_addr == 0xFFFFFFFFu) return 0;
     uint32_t now = (uint32_t)s_frame_count;
     for (int variant = 0; variant < 2; variant++) {
-        uint32_t key = (gp0_cmd_source_addr - (variant ? 0u : 4u)) & 0x1FFFFCu;
+        uint32_t key = psx_mod_gpu_dma_resolve_address(
+            gp0_cmd_source_addr - (variant ? 0u : 4u));
         uint32_t idx = (key >> 2) & (WS_TAG_BUCKETS - 1);
         for (int i = 0; i < WS_TAG_PROBES; i++) {
             WsTag *t = &ws_tags[(idx + i) & (WS_TAG_BUCKETS - 1)];
@@ -1986,7 +1988,7 @@ static int ws_auto_ui_anchor(int32_t *out_anchor) {
     if (!ws_auto_ui_squash || !ws_active() ||
         gp0_cmd_source_addr == 0xFFFFFFFFu)
         return 0;
-    uint32_t src = gp0_cmd_source_addr & 0x1FFFFCu;
+    uint32_t src = psx_mod_gpu_dma_resolve_address(gp0_cmd_source_addr);
     for (uint32_t i = 0; i < ws_ui_prepass_count; i++) {
         if (ws_ui_prepass[i].src_addr != src) continue;
         if (out_anchor) *out_anchor = ws_ui_prepass[i].group.anchor;
@@ -3286,10 +3288,18 @@ static void geometry_diag_note_accepted(
  * cracks between adjacent primitives. Missing provenance is deliberately a
  * canonical-render fallback for the whole polygon. The integer delta folds in
  * draw offsets and any widescreen adjustment already applied. */
+/* Valid only for the polygon most recently resolved below. Both halves of a
+ * quad use their original indices; shader q remains a separate attribute. */
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+static uint16_t s_precise_vertex_depth[4];
+#endif
 static int resolve_precise_vertices(const int *indices, int count,
                                     int triangle_count,
                                     const int32_t *vx, const int32_t *vy,
                                     int32_t *fx, int32_t *fy) {
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    memset(s_precise_vertex_depth, 0, sizeof(s_precise_vertex_depth));
+#endif
     if (!gte_geometry_correction_enabled())
         return 0;
 
@@ -3383,6 +3393,9 @@ static int resolve_precise_vertices(const int *indices, int count,
                                 precise_x, precise_y, raw_x, raw_y,
                                 raw_x, raw_y, z);
     for (int i = 0; i < count; ++i) {
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+        s_precise_vertex_depth[i] = z[i];
+#endif
         fx[i] = (int32_t)((int64_t)precise_x[i] +
                           (int64_t)(vx[i] - raw_x[i]) * 65536);
         fy[i] = (int32_t)((int64_t)precise_y[i] +
@@ -3399,6 +3412,9 @@ static void queue_precise_triangle(int exact,
                                    int a, int b, int c) {
     const int geometry_enabled = gte_geometry_correction_enabled();
     gr_set_world_triangle(0);
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    gr_set_temporal_depth_triangle(0, 0.0f, 0.0f, 0.0f);
+#endif
     gr_set_perspective_triangle(0, 0.0f, 0.0f, 0.0f);
     if (geometry_enabled) ++ws_geometry_world_triangles;
     if (!geometry_enabled || !exact) {
@@ -3407,6 +3423,12 @@ static void queue_precise_triangle(int exact,
     }
     ++ws_geometry_precise_triangles;
     gr_set_world_triangle(1);
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    gr_set_temporal_depth_triangle(1,
+                                   (float)s_precise_vertex_depth[a],
+                                   (float)s_precise_vertex_depth[b],
+                                   (float)s_precise_vertex_depth[c]);
+#endif
     gr_set_precise_triangle(1,
                             fx[a], fy[a], fx[b], fy[b], fx[c], fy[c]);
 }
@@ -4702,7 +4724,7 @@ static void ws_ui_prepass_add(const uint32_t *words, uint32_t source_addr,
     item->group.x = min_x;
     item->group.width = width;
     item->group.anchor = 0;
-    item->src_addr = source_addr & 0x1FFFFCu;
+    item->src_addr = psx_mod_gpu_dma_resolve_address(source_addr);
     item->ot_rank = rank;
 }
 

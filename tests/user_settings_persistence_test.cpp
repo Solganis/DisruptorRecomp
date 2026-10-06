@@ -33,7 +33,8 @@ int main() {
         const fs::path path = root / fs::u8path(u8"settings-unicode-ü.toml");
         UserSettings missing = PSXRecompV4::load_user_settings(path);
         require(!missing.parse_error && !missing.has_mouse_aim &&
-                    !missing.has_vsync,
+                    !missing.has_vsync && !missing.has_master_volume &&
+                    !missing.has_audio_muted,
                 "missing settings must fall through without overrides");
 
         UserSettings written;
@@ -46,12 +47,16 @@ int main() {
         written.has_frame_interpolation_fps = true;
         written.frame_interpolation_fps = 144;
         written.has_frame_interpolation_blend = true;
-        written.frame_interpolation_blend = 1;
+        written.frame_interpolation_blend = 2;
         written.has_aspect_ratio = true;
         written.aspect_num = 32;
         written.aspect_den = 9;
         written.has_adaptive_view = true;
         written.adaptive_view = false;
+        written.has_master_volume = true;
+        written.master_volume = 37;
+        written.has_audio_muted = true;
+        written.audio_muted = true;
         written.has_mouse_aim = true;
         written.mouse_aim = true;
         written.has_modern_controls = true;
@@ -91,12 +96,15 @@ int main() {
         require(loaded.has_frame_interpolation_fps &&
                     loaded.frame_interpolation_fps == 144 &&
                     loaded.has_frame_interpolation_blend &&
-                    loaded.frame_interpolation_blend == 1,
+                    loaded.frame_interpolation_blend == 2,
                 "interpolation preferences did not round-trip");
         require(loaded.has_aspect_ratio && loaded.aspect_num == 32 &&
                     loaded.aspect_den == 9 && loaded.has_adaptive_view &&
                     !loaded.adaptive_view,
                 "fixed display aspect did not round-trip");
+        require(loaded.has_master_volume && loaded.master_volume == 37 &&
+                    loaded.has_audio_muted && loaded.audio_muted,
+                "host audio controls did not round-trip");
         require(loaded.has_mouse_aim && loaded.mouse_aim &&
                     loaded.has_modern_controls && loaded.modern_controls &&
                     loaded.has_horizontal_sensitivity &&
@@ -126,9 +134,36 @@ int main() {
                     replaced.has_supersampling &&
                     replaced.supersampling == 3 &&
                     replaced.has_fullscreen && replaced.fullscreen == 2 &&
-                    replaced.has_adaptive_view && !replaced.adaptive_view,
+                    replaced.has_adaptive_view && !replaced.adaptive_view &&
+                    replaced.has_master_volume &&
+                    replaced.master_volume == 37 &&
+                    replaced.has_audio_muted && replaced.audio_muted,
                 "replacement did not preserve the merged settings");
         require(!has_temp_sibling(root), "replacement leaked a temp file");
+
+        const fs::path scale_path = root / "internal-scale.toml";
+        for (int scale = 1; scale <= 8; ++scale) {
+            UserSettings preference;
+            preference.has_supersampling = true;
+            preference.supersampling = scale;
+            require(PSXRecompV4::save_user_settings(scale_path, preference),
+                    "internal scale save failed");
+            const UserSettings roundtrip =
+                PSXRecompV4::load_user_settings(scale_path);
+            require(roundtrip.has_supersampling &&
+                        roundtrip.supersampling == scale,
+                    "valid 1x-8x internal scale did not round-trip");
+        }
+        for (int invalid_scale : {0, 9}) {
+            {
+                std::ofstream out(scale_path, std::ios::trunc);
+                out << "[video]\nsupersampling = " << invalid_scale << "\n";
+            }
+            const UserSettings rejected =
+                PSXRecompV4::load_user_settings(scale_path);
+            require(!rejected.parse_error && !rejected.has_supersampling,
+                    "out-of-range internal scale was accepted on load");
+        }
 
         replaced.has_aspect_ratio = true;
         replaced.aspect_num = 32;
@@ -142,6 +177,39 @@ int main() {
                     adaptive.aspect_den == 9 && adaptive.has_adaptive_view &&
                     adaptive.adaptive_view,
                 "adaptive display aspect did not round-trip");
+
+        const fs::path interpolation = root / "interpolation.toml";
+        for (const int mode : {0, 1, 2}) {
+            UserSettings preference;
+            preference.has_frame_interpolation_blend = true;
+            preference.frame_interpolation_blend = mode;
+            require(PSXRecompV4::save_user_settings(interpolation, preference),
+                    "interpolation mode save failed");
+            const UserSettings roundtrip =
+                PSXRecompV4::load_user_settings(interpolation);
+            require(roundtrip.has_frame_interpolation_blend &&
+                        roundtrip.frame_interpolation_blend == mode,
+                    "valid interpolation mode did not round-trip");
+        }
+        for (const int mode : {-1, 3, 99}) {
+            {
+                std::ofstream out(interpolation, std::ios::trunc);
+                out << "[video]\nframe_interpolation_blend = " << mode << "\n";
+            }
+            const UserSettings rejected =
+                PSXRecompV4::load_user_settings(interpolation);
+            require(!rejected.parse_error &&
+                        !rejected.has_frame_interpolation_blend,
+                    "invalid interpolation mode was accepted on load");
+            UserSettings preference;
+            preference.has_frame_interpolation_blend = true;
+            preference.frame_interpolation_blend = mode;
+            require(PSXRecompV4::save_user_settings(interpolation, preference),
+                    "invalid interpolation mode prevented saving other settings");
+            require(!PSXRecompV4::load_user_settings(interpolation)
+                         .has_frame_interpolation_blend,
+                    "invalid interpolation mode was saved");
+        }
 
         const fs::path invalid = root / "invalid.toml";
         {
@@ -161,7 +229,10 @@ int main() {
                    "vertical_sensitivity = -1.0\n"
                    "invert_vertical = true\n"
                    "geometry_correction = false\n"
-                   "perspective_textures = true\n";
+                   "perspective_textures = true\n"
+                   "[audio]\n"
+                   "master_volume = 101\n"
+                   "muted = \"yes\"\n";
         }
         UserSettings tolerant = PSXRecompV4::load_user_settings(partial);
         require(!tolerant.parse_error && tolerant.has_mouse_aim &&
@@ -173,7 +244,9 @@ int main() {
                     tolerant.has_geometry_correction &&
                     !tolerant.geometry_correction &&
                     tolerant.has_perspective_textures &&
-                    tolerant.perspective_textures,
+                    tolerant.perspective_textures &&
+                    !tolerant.has_master_volume &&
+                    !tolerant.has_audio_muted,
                 "field validation must be tolerant and dependency-neutral");
 
         const fs::path blocked = root / "blocked.toml";

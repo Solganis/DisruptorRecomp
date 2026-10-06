@@ -8,21 +8,135 @@
 | Capture and execute runtime overlays | Complete for tested path | Private captured overlay set covers the validated first-level route |
 | Menus, intro, and FMV | Complete for tested path | Native Windows user tests reach gameplay reliably |
 | First mission | Complete | User played through the first level |
-| Host presentation pacing and audio | Complete for tested path | Performance Test 7 held 60 presented FPS throughout and audio was clean; this does not raise Disruptor's guest gameplay/camera update cadence |
+| Host presentation pacing and audio | Complete for tested path; live volume-control retest pending | Performance Test 7 held 60 presented FPS throughout and audio was clean; this does not raise Disruptor's guest gameplay/camera update cadence. The current build adds persisted host-side master volume and mute controls with a smoothed final-output gain stage; live adjustment, mute restoration and relaunch persistence still need user validation. |
 | Gameplay/render cadence | Root cause traced; guarded 60 Hz prototype next | The host and substantive gameplay tick are very likely already about 59.94 Hz, but the retail outer loop batches two elapsed-VBlank ticks before one world render, yielding about 29.97 unique camera/world images. A one-VBlank de-batching experiment now has an exact guarded site and needs counters plus state-delta validation |
+| Geometry inter-frame interpolation | Deactivated for now | Disruptor builds compile out the interpolation shaders, history textures, temporal capture and worker. Config/settings, environment overrides and mod APIs cannot enable it. Software smoothing and frame blending are also disabled. Interpolation controls and debug statistics are removed from the menu; experimental source and math tests remain available for future work. Earlier smoothness and seam-repair evidence is preserved below. |
 | 4x geometry rendering | Complete for tested path | 120 steady samples: 59.52–60.37 Hz, mean 59.94 Hz |
 | Horizontal mouse integration | Improved; live retest pending | User reports generally smooth mouse aim. Nearest-step error diffusion now bounds the carried byte-quantisation error to half a yaw unit without temporal averaging, reducing small-motion threshold delay while preserving exact cumulative input; visible camera/world images remain limited by the retail two-tick/one-render batching |
 | Presentation-only precise geometry | Accepted for the tested path; minor edge residual | The scratchpad continuation almost completely removed the ramp gaps. The ongoing retest reached 4,416,280/4,775,680 accepted candidates (92.474%), with 96.045% in a stable interval. An occasional one-pixel screen-edge sliver remains and is accepted for now; canonical VRAM remains unchanged |
 | Presentation-only perspective textures | Accepted for the tested path; mild localized residual | User reports textures are definitely better. The run applied perspective correction to 3,509,462 triangles (92.496% of world triangles); remaining provenance fallbacks stay affine. Canonical VRAM, HUD and sprites remain unchanged |
 | Modern keyboard/mouse actions | Complete for tested path | Test 4 confirmed the first-launch keybind-order fix; modern keys no longer overlap the legacy preset |
-| In-game settings/dev menu | Implemented and live-validated with persistence; fullscreen selector live-validated | User testing passed menu input blocking, mouse-capture release/restore, live geometry/texture toggles, sensitivity, interpolation activation, settings restoration, live fixed-aspect switching, and adaptive Match window resizing from 4:3 through the 32:9 cap. The System tab now exposes live Windowed, Borderless fullscreen, and Exclusive fullscreen modes; explicit selections persist while Alt+Enter remains transient. SDL3 uses a concrete display mode for Exclusive rather than silently treating both fullscreen labels as borderless. User validation passed live mode transitions and relaunch persistence. HUD and first-person weapon sprites remain proportion-correct, item-sprite flicker is confirmed fixed, and the mirrored-enemy guard change produced a substantially better follow-up result. The repair accepts either FT4 winding while retaining exact packet, shape, width, content-fingerprint and lifetime checks. A live persistent 1x-4x OpenGL internal-resolution control has also been added; scale-dependent canonical and native-wide targets migrate transactionally without discarding the current frame. Reviewed preferences merge into executable-adjacent `settings.toml` through atomic replacement; explicit launch flags retain precedence and interpolation activation remains session-only. The 4:3 exact-geometry surface provisioning and framebuffer-clear regressions are fixed and live-validated. Session-only God Mode was live-validated toggling on/off and preventing damage; the confirmed retail All Weapons + psionics action was also live-validated. Exact-geometry alternation is deferred as [issue #1](https://github.com/micmea668/DisruptorRecomp/issues/1), the widescreen green skyline plane as [issue #2](https://github.com/micmea668/DisruptorRecomp/issues/2), and the one-off severe scene corruption as [issue #3](https://github.com/micmea668/DisruptorRecomp/issues/3). The skyline-plane GTE depth probe remains disabled by default: changing its threshold from 900 to 1 produced no visual change, so the responsible GP0 path still needs tracing. |
+| In-game settings | Public-build cleanup implemented; live 8x training retest passed | Controls, Enhancements, Cheats and System remain. The Diagnostics tab, sprite-path probes, skyline-depth controls, draw-distance/shading selectors and sub-byte camera presentation option are removed. The window title is Disruptor Settings and the Developer build badge is removed. Old saved camera preferences are ignored, camera/skyline experiments reset off, sprite repair paths remain enabled and distance/shading reset to Retail. Internal resolution now supports and persists every integer scale from 1x through 8x; the default stays 4x. Live OpenGL scale changes retain the existing transactional allocation and rollback. Previous user testing validated input blocking, capture restoration, core control/geometry/texture settings, aspect/fullscreen transitions and persistence. The user confirmed the repaired first-training-level run at 8x and 32:9 stayed correct; 5x-7x have not been individually exercised live. |
+| Ultrawide texture corruption and freeze | Primitive-buffer overflow fixed; training retest passed | The frozen capture proves dense widened views exceeded the retail 69,632-byte primitive arena and overwrote adjacent texture descriptors. Two 512 KiB buffers now use the framework's 24-bit GPU aperture, preserving exact geometry and perspective provenance. Separate buffers, dense linked lists, mode fallback and restored allocation state have regression coverage. The user's 8x / 32:9 retest stayed correct through 8,934 frames and closed normally. A fresh-process save-state load also resumed the training level with valid texture pages. |
 | Vertical mouse look | Implemented experimentally; initial live validation passed | A bounded +/-30.94-degree host pitch shifts the game's GTE and audited CPU projection horizon, widens six reviewed vertical participation tests, and applies the same slope to unaided normal/psionic projectiles. Map, scripted-camera, inactive-player, replay and netplay states fail closed to retail presentation. User camera/aim checks and the clean Windows x64 build passed; the exact generated-hook audit and standalone camera/input/persistence tests also pass. Broader world-edge, actor and full-campaign coverage remains pending |
-| Experimental far rendering | Distance extension live-validated; yellow distance transition unresolved | The session-only Retail/1.25x/1.5x control substitutes thirteen exact renderer-only far/fade loads while leaving guest globals and saves unchanged. A fixed-view 1.5x A/B doubled visible-room spans from 4 to 8, raised traversal depth from 2 to 3 without hitting the cap, changed 1,450/2,610 final portal decisions and 1,156/4,335 object decisions from retail rejection to acceptance, and exposed a distant pickup that Retail culled. The user's later 25x test still left terrain/structures merging into the mustard distance field, so the remaining limitation is not explained by the known far tests alone; a separate terrain palette/visibility path or the interaction with the level-authored PSYQ DRAWENV clear remains to be traced. A missed live billboard CLUT pass is included alongside the reviewed world paths. Conditional room marks and unique visible-room spans are labelled separately. Two store-feeding setup loads and three unrelated loads remain excluded; guards fail closed and savestate loads abandon only host metrics. |
+| Experimental far rendering | Controls removed for public-build preparation; prior yellow distance transition unresolved | The earlier session-only Retail/1.25x/1.5x control substitutes thirteen exact renderer-only far/fade loads while leaving guest globals and saves unchanged. A fixed-view 1.5x A/B doubled visible-room spans from 4 to 8, raised traversal depth from 2 to 3 without hitting the cap, changed 1,450/2,610 final portal decisions and 1,156/4,335 object decisions from retail rejection to acceptance, and exposed a distant pickup that Retail culled. The user's later 25x test still left terrain/structures merging into the mustard distance field, so the remaining limitation is not explained by the known far tests alone; a separate terrain palette/visibility path or the interaction with the level-authored PSYQ DRAWENV clear remains to be traced. A missed live billboard CLUT pass is included alongside the reviewed world paths. Conditional room marks and unique visible-room spans are labelled separately. Two store-feeding setup loads and three unrelated loads remain excluded; guards fail closed and savestate loads abandon only host metrics. |
 | 16:9 projection and protected HUD | Complete for tested path | Test 9 user result confirms stable rotation and correct geometry at both widescreen edges |
 | Saves and later-level coverage | In progress | Memory-card behavior and full campaign regression remain unverified |
 | Source repository checkpoint | Complete | Initial source-only Git checkpoint excludes disc data, generated retail translations, captures, binaries, and captured overlays |
 
 ## Latest evidence
+
+The recurring green texture corruption and subsequent freeze were traced to
+Disruptor's retail primitive arenas, not the supersampling allocation. In the
+frozen training-level capture, the second arena ended at `0x800AF320`, where
+texture descriptors begin. Widened visibility generated up to 85,844 bytes of
+packets in a 69,632-byte arena. Texture-page references became invalid at frame
+8,231 before the runtime stopped advancing at frame 8,261. This explains why
+the user reproduced the issue at both 4x and 8x during uninterrupted gameplay.
+
+The audited renderer entry now redirects its two arena roots to separate
+512 KiB allocations in the existing 24-bit GPU DMA aperture. The 4:3,
+comparator and netplay paths retain the retail roots. GPU source tags and GTE
+store provenance preserve the full aperture address, including scratchpad
+projection copies. Save states serialize the allocated aperture bytes; older
+states without that optional section restore an empty allocation. A fresh
+process successfully loaded a training-level state and continued rendering:
+all 1,004 sampled world GT4 packets used the new buffers and retained valid
+texture pages. The user confirmed the visible 8x / 32:9 retest stayed correct
+through 8,934 frames and closed normally. Broader campaign coverage remains
+pending.
+
+Frame interpolation is deactivated at the user's request. The runtime target
+now defines `PSX_DISABLE_FRAME_INTERPOLATION=1`, so neither legacy blending nor
+temporal geometry presentation can run or allocate interpolation resources.
+The Diagnostics tab and the pictured experimental controls are now also
+removed for public-build preparation. Internal resolution supports 1x through
+8x in the menu, renderers, game config and saved user settings, with the default
+remaining 4x. The native
+Windows Release build passed, and all 25 root CTests passed (two filesystem
+tests needed a workspace-local temp directory under the sandbox). Inspection
+of the compiled GL object confirms the interpolation worker, temporal scene
+storage and interpolation textures are absent. The source is preserved for
+future work. The earlier experiment's evidence below is
+historical and does not describe a feature available in the current build.
+
+The suspended geometry inter-frame experiment retained and redrew presentation
+triangles between source frames. It had replaced legacy image blending as the
+default mode selected by the Disruptor menu, while activation stayed off on each
+launch. Earlier interpolation activation tests in the menu milestone do not
+validate this new renderer. The initial native Windows OpenGL build and all
+23 root CTests passed. An isolated live
+Mission 1 practice run at 4x produced 120 presentations per second from about
+29.95 scene captures per second while the guest frame interval averaged
+16.683 ms. The opening view conservatively matched about 734-738 of 1,334 world
+triangles. Three GPU replay comparisons at `alpha=1` each reported zero
+differing RGB pixels out of 1,228,800, maximum channel delta 0 and GL error 0.
+Moving right for three seconds continued geometry redraws with no sampled GL
+errors.
+
+The user then confirmed excellent smoothness but reported hundreds of seams
+while moving or turning. Independent triangle matches allowed neighboring
+triangles to disagree about the motion of their shared vertices; the endpoint
+readbacks could not reveal those intermediate-frame splits.
+
+The current repair uses conservative triangle matches to seed previous vertex
+positions, then reconciles motion across shared current vertices, including
+neighbors without a complete triangle match. Shared vertices are identified by
+exact current screen coordinates and independent, unnormalized GTE depth. The
+per-polygon normalized reciprocal depth used for texture shading remains
+separate so different polygon normalizations do not split adjacency. Ambiguous
+motion candidates hold the entire shared vertex at its current position, and
+triangle-safety holds propagate to neighboring uses of that vertex. Unsafe
+scenes still hold the current completed frame. Tiny or otherwise ineligible
+world faces anchor their shared vertices, and ambiguity/depth-bridge guards
+prevent unknown-depth connections from merging incompatible known-depth
+groups. A local T-junction guard recognizes depth-confirmed A-M/M-B edges plus
+a longer A-B edge and anchors A, M and B. Its neighbor degree is bounded to 16;
+it does not snap or change the original real-frame positions.
+
+The final revision with that T-junction guard builds on native Windows with
+`PSX_DEBUG_TOOLS=OFF` and passes all 24 root CTests. Replaying a captured moving
+Mission 1 snapshot
+through the final helper covered 1,338 world triangles and 778 shared
+screen-position/depth groups. At `alpha=0.5`, independent triangle interpolation
+split 405 groups by more than one native pixel, with a maximum gap of
+14.728902 pixels; reconciliation reduced shared-group gaps to zero. Five
+depth-confirmed T-junctions checked at `alpha=0.25`, `0.5` and `0.75` retained
+only their original real-frame deviation, at most 0.009517 native pixels,
+with zero added gap. In this replay, 642 triangles retained motion and 504
+unmatched corners received shared motion. Broader user visual validation of
+the repair remains pending.
+
+An independent capture from the final live run contained 1,324 world triangles
+and 774 shared groups. Its baseline split 399 groups by more than one native
+pixel (max 12.13705 pixels); the repaired replay again had zero shared-group
+gaps. Four depth-confirmed T-junctions had zero added gap, retaining at most
+0.009456 native pixels of original real-frame deviation.
+
+The final live Mission 1 run used 4x internal resolution and a 120 FPS target,
+turning right and returning for 35 frames each, then moving forward for 180
+frames. Ordinary intervals recorded 29.95-30.15 scene captures/s and 120
+presentations/s; the bounded diagnostic readback interval averaged 118.94
+presentations/s. Guest frames averaged 16.684 ms and sampled GL errors were
+zero. Final `alpha=1` endpoint comparisons each found 1 of 1,228,800 RGB pixels
+with a channel delta greater than 1, maximum channel delta 7, and GL error 0.
+This is a small residual raster difference, not bit-exact endpoint agreement.
+The release was rebuilt with debug tools disabled and all 24 root CTests passed
+again after that validation.
+
+The guards can leave some geometry unsmoothed. Primitives without world
+provenance (`world == 0`), unrecognized T-junctions and clipping transitions
+remain potential limitations; full game-state, camera and object simulation
+interpolation is not implemented. A repeatable live
+comparison must assess shared-edge continuity during movement/turning, HUD
+clarity, fallback behavior and the added one-source-frame visual delay.
+`PSX_GL_INTERP_DIAG=1` reports
+scenes, redraws, fallback captures and matched world triangles alongside
+cadence. Mesh diagnostics add moving triangles, seeded/shared vertices,
+propagated corners, conflicts, held vertices and anchored T-junctions.
+Optional `PSX_GL_TEMPORAL_VERIFY=1` runs three expensive GPU endpoint
+readback comparisons for diagnostics only; it should remain unset during
+ordinary play and performance measurements.
 
 Modernisation Test 11 proved the separate presentation surface itself worked,
 but its rounded packed-SXY fallback was not a valid identity for projected

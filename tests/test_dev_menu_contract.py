@@ -102,6 +102,10 @@ for token in (
     "psx_host_video_set_internal_scale",
     "psx_host_video_get_fullscreen_mode",
     "psx_host_video_set_fullscreen_mode",
+    "psx_host_audio_get_master_volume",
+    "psx_host_audio_set_master_volume",
+    "psx_host_audio_get_muted",
+    "psx_host_audio_set_muted",
     "psx_host_user_settings_path",
 ):
     require(token in host_ui, f"host UI ABI is missing {token}")
@@ -201,6 +205,14 @@ for token in (
     require(token in scale_setter,
             f"live internal-scale setter is missing {token}")
 
+sw_header = read("psxrecomp-overlay/runtime/include/gpu_sw_renderer.h")
+require("#define SW_MAX_INTERNAL_SCALE 8" in sw_header and
+        "#define GL_MAX_INTERNAL_SCALE SW_MAX_INTERNAL_SCALE" in gl,
+        "renderers must share the 8x internal scale limit")
+require("supersampling out of range (1..8)" in config_cpp and
+        "n >= 1 && n <= 8" in config_cpp,
+        "config and persisted internal scale must support 1x-8x")
+
 fullscreen_apply = function_body(main_cpp,
                                  "psx_apply_window_fullscreen_mode")
 for token in (
@@ -267,13 +279,6 @@ for config_name, config in (
     require('unsquash_funcs = ["0x8003A0F0"]' in config,
             f"{config_name} is missing the finite-skyline diagnostic candidate")
 
-require("gte_ws_get_far_threshold" in menu and
-        "gte_ws_set_far_threshold" in menu and
-        "gte_ws_get_backdrop_repair_enabled" in menu and
-        "gte_ws_set_backdrop_repair_enabled" in menu and
-        "gte_ws_get_sz_stats" in menu and
-        'SeparatorText("Finite skyline diagnosis")' in menu,
-        "developer menu is missing the session-only finite-skyline tuner")
 require("static int s_ws_backdrop_repair_enabled = 0;" in gte,
         "the unvalidated finite-skyline probe must default off")
 
@@ -283,18 +288,47 @@ for token in (
     'BeginTabItem("Controls")',
     'BeginTabItem("Enhancements")',
     'BeginTabItem("Cheats")',
-    'BeginTabItem("Diagnostics")',
     'BeginTabItem("System")',
     "gpu_geometry_correction_set",
     "gpu_texture_correction_set",
-    "psx_host_video_set_interpolation",
     "psx_host_video_set_vsync",
     "psx_host_video_set_display_aspect",
     "psx_host_video_set_internal_scale",
     "psx_host_video_set_fullscreen_mode",
-    "gpu_geometry_correction_stats_detailed",
 ):
     require(token in menu, f"developer menu is missing {token}")
+
+for forbidden in (
+    'BeginTabItem("Diagnostics")',
+    "draw_diagnostics_tab",
+    "gpu_geometry_correction_stats_detailed",
+    "gpu_ws_get_debug",
+    "draw_billboard_aspect_diagnostic_controls",
+    "draw_finite_backdrop_controls",
+    "draw_far_rendering_controls",
+    "gte_ws_get_sz_stats",
+    "disruptor_far_rendering_get_diagnostics",
+    "disruptor_far_rendering_set_preset",
+    "disruptor_far_rendering_set_depth_fade_mode",
+    "PREF_PRECISE_CAMERA",
+    "mark_precise_camera",
+    "settings.has_high_precision_camera",
+    '"Sub-byte camera presentation"',
+    '"Camera presentation"',
+    '"Developer build"',
+    '"Widescreen sprite diagnosis"',
+    '"Finite skyline diagnosis"',
+    '"Experimental: Draw distance"',
+):
+    require(forbidden not in menu,
+            f"public settings must omit removed debug items: {forbidden}")
+require('ImGui::Begin("Disruptor Settings"' in menu,
+        "the public menu must use the settings title")
+for function_name in ("on_runtime_ready", "on_runtime_shutdown"):
+    session_body = function_body(menu, function_name)
+    require("disruptor_high_precision_camera_set_enabled(0)" in session_body and
+            "gte_ws_set_backdrop_repair_enabled(0)" in session_body,
+            f"{function_name} must reset removed camera and skyline experiments")
 
 for forbidden in (
     "psx_write_byte",
@@ -310,7 +344,6 @@ for flag in (
     "PSX_HOST_UI_CAPTURE_KEYBOARD",
     "PSX_HOST_UI_CAPTURE_MOUSE",
     "PSX_HOST_UI_CAPTURE_GAMEPAD",
-    "PSX_HOST_UI_SUSPEND_INTERPOLATION",
     "PSX_HOST_UI_VISIBLE",
 ):
     require(flag in flags_body, f"visible menu must request {flag}")
@@ -361,72 +394,6 @@ for token in (
     require(token in far_rendering_h,
             f"far-rendering session ABI is missing {token}")
 
-far_controls = function_body(menu, "draw_far_rendering_controls")
-for token in (
-    'SeparatorText("Experimental: Draw distance")',
-    '"Retail", "1.25x", "1.5x"',
-    '"Retail palette ramp", "Nearest CLUT row (diagnostic)"',
-    'ImGui::Combo("Distance shading"',
-    "diagnostics.netplay_blocked",
-    "diagnostics.gameplay_ready",
-    "ImGui::BeginDisabled()",
-    "disruptor_far_rendering_set_preset",
-    "Restore Retail distance and fade",
-    "disruptor_far_rendering_set_depth_fade_mode",
-    "reveal the void",
-    "portal or ",
-    "culling errors",
-    "distant actors frozen",
-    "primitive ",
-    "pressure or frame time",
-    "selects the nearest palette row",
-    "world and billboard paths",
-    "level-authored DRAWENV background",
-    "add geometry, or bypass portal/content culling",
-    "Applied far / shading hooks",
-    "Session-only",
-):
-    require(token in far_controls,
-            f"far-rendering menu control is missing {token}")
-
-diagnostics_body = function_body(menu, "draw_diagnostics_tab")
-for token in (
-    "source_far_distance",
-    "effective_far_distance",
-    "effective_fade_start",
-    "depth_fade_mode",
-    "substituted_loads",
-    "far_load_substitutions",
-    "fade_load_substitutions",
-    "completed_frames",
-    "primitive_samples",
-    "primitive_high_water",
-    "render_wall_us_p50",
-    "render_wall_us_p95",
-    "render_wall_us_max",
-    "portal_final_decision_flips",
-    "portal_final_decisions",
-    "object_decision_flips",
-    "object_far_decisions",
-    "traversal_rooms_last",
-    "traversal_rooms_high_water",
-    "submitted_spans_last",
-    "submitted_spans_high_water",
-    "traversal_max_depth_last",
-    "traversal_max_depth_high_water",
-    "traversal_cap_hits",
-    "portal_shortcut_relaxations",
-    "packet_entry_to_traversal_end_last",
-    "packet_traversal_to_visible_start_last",
-    "packet_visible_loop_last",
-    "packet_post_visible_loop_last",
-    "observer_sequence_errors",
-    "New valid-room marks last / high",
-    "Visible room spans last / high",
-):
-    require(token in diagnostics_body,
-            f"far-rendering diagnostics are missing {token}")
-
 require("disruptor_far_rendering_reset_session();" in
         function_body(menu, "on_runtime_ready") and
         "disruptor_far_rendering_reset_session();" in
@@ -462,6 +429,8 @@ for token in (
     "has_high_precision_camera",
     "has_geometry_correction",
     "has_perspective_textures",
+    "has_master_volume",
+    "has_audio_muted",
 ):
     require(token in config_h and token in config_cpp,
             f"settings.toml schema is missing {token}")
@@ -513,10 +482,37 @@ require("flush_preferences();" in shutdown_body and
         "dirty preferences must flush before UI/renderer teardown")
 require("io.IniFilename = nullptr" in menu,
         "unreviewed ImGui layout state must remain outside persistence")
-require("mark_interpolation_target" in menu and
-        "mark_interpolation_blend" in menu and
-        "mark_interpolation_enabled" not in menu,
-        "blurry interpolation activation must remain session-only")
+require("PSX_DISABLE_FRAME_INTERPOLATION=1" in cmake,
+        "frame interpolation must be compiled out in Disruptor builds")
+for forbidden in (
+    "psx_host_video_set_interpolation",
+    "psx_host_video_get_interpolation",
+    "gl_renderer_interpolation_diag",
+    "draw_geometry_interpolation_stats",
+    "mark_interpolation_",
+    "PREF_INTERP_",
+    "PSX_HOST_UI_SUSPEND_INTERPOLATION",
+    '"Frame interpolation"',
+    '"Interpolation mode"',
+    '"Presentation target"',
+):
+    require(forbidden not in menu,
+            f"disabled interpolation must not enter the menu: {forbidden}")
+require("#ifdef PSX_DISABLE_FRAME_INTERPOLATION" in interpolation_setter and
+        "return enabled ? 0 : 1;" in interpolation_setter,
+        "the live API must reject interpolation activation in disabled builds")
+for name in ("psx_mod_set_frame_interpolation",
+             "psx_mod_set_frame_interpolation_blend"):
+    body = function_body(main_cpp, name)
+    require(body.lstrip().startswith("#ifdef PSX_DISABLE_FRAME_INTERPOLATION") and
+            "return 0;" in body.split("#else", 1)[0],
+            f"mods must not enable compiled-out interpolation: {name}")
+require('#ifndef PSX_DISABLE_FRAME_INTERPOLATION\n'
+        '#include "gpu_gl_temporal.c.inc"' in gl and
+        "#define interp_capture(...) 0" in gl and
+        "#define temporal_draw(...) ((void)0)" in gl and
+        "#define temporal_begin(...) ((void)0)" in gl,
+        "disabled builds must omit temporal recording and the presenter worker")
 
 aspect_controls = function_body(menu, "draw_aspect_controls")
 for token in (
@@ -538,7 +534,8 @@ scale_controls = function_body(menu, "draw_internal_resolution_controls")
 for token in (
     'SeparatorText("Rendering resolution")',
     'Combo("Internal resolution scale"',
-    '"1x (native)", "2x", "3x", "4x"',
+    '"1x (native)", "2x", "3x", "4x", "5x", "6x", "7x", "8x"',
+    "kScaleCount = 8",
     "psx_host_video_get_internal_scale",
     "psx_host_video_set_internal_scale",
     "mark_supersampling",
@@ -595,20 +592,81 @@ require("settings.has_fullscreen" in
 require("mark_fullscreen" not in function_body(menu, "on_sdl_event"),
         "menu event handling must not persist transient fullscreen hotkeys")
 
-billboard_controls = function_body(
-    menu, "draw_billboard_aspect_diagnostic_controls")
+audio_controls = function_body(menu, "draw_audio_controls")
 for token in (
-    'SeparatorText("Widescreen sprite diagnosis")',
-    'Button("Disable world-sprite repair")',
-    'Button("Restore all sprite paths")',
-    'TreeNode("Isolate packet-builder paths")',
-    "disruptor_billboard_aspect_get_site_mask",
-    "disruptor_billboard_aspect_set_site_mask",
-    "the level clear colour",
-    "Every runtime start restores all reviewed sprite paths",
+    'SeparatorText("Audio output")',
+    'SliderInt("Master volume"',
+    'Checkbox("Mute all audio"',
+    "psx_host_audio_get_master_volume",
+    "psx_host_audio_set_master_volume",
+    "psx_host_audio_get_muted",
+    "psx_host_audio_set_muted",
+    "mark_master_volume",
+    "mark_audio_muted",
+    'draw_status_badge("LIVE"',
+    "game audio state and saves are unchanged",
 ):
-    require(token in billboard_controls,
-            f"billboard isolation control is missing {token}")
+    require(token in audio_controls,
+            f"live host-audio controls are missing {token}")
+merge_preferences = function_body(menu, "merge_dirty_preferences")
+require("PREF_MASTER_VOLUME" in merge_preferences and
+        "settings.has_master_volume = true" in merge_preferences and
+        "settings.master_volume = pending.master_volume" in merge_preferences and
+        "PREF_AUDIO_MUTED" in merge_preferences and
+        "settings.has_audio_muted = true" in merge_preferences and
+        "settings.audio_muted = pending.audio_muted" in merge_preferences,
+        "host-audio selections must be merged into user settings")
+pending_preferences = function_body(menu, "apply_pending_preferences")
+require("PREF_MASTER_VOLUME" in pending_preferences and
+        "psx_host_audio_set_master_volume" in pending_preferences and
+        "PREF_AUDIO_MUTED" in pending_preferences and
+        "psx_host_audio_set_muted" in pending_preferences,
+        "pending host-audio settings must survive a soft runtime session")
+saved_preferences = function_body(menu, "apply_saved_preferences")
+require("settings.has_master_volume" in saved_preferences and
+        "psx_host_audio_set_master_volume" in saved_preferences and
+        "settings.has_audio_muted" in saved_preferences and
+        "psx_host_audio_set_muted" in saved_preferences,
+        "saved host-audio settings must restore for a soft runtime session")
+
+volume_setter = function_body(main_cpp,
+                              "psx_host_audio_set_master_volume")
+require("percent < 0" in volume_setter and "percent > 100" in volume_setter and
+        "g_audio_master_volume_percent.store" in volume_setter,
+        "master-volume API must validate and publish 0..100 percent")
+mute_setter = function_body(main_cpp, "psx_host_audio_set_muted")
+require("muted != 0" in mute_setter and "muted != 1" in mute_setter and
+        "g_audio_master_muted.store" in mute_setter,
+        "mute API must validate and publish a boolean latch")
+master_gain = function_body(main_cpp, "sdl_audio_apply_master_gain")
+for token in (
+    "g_audio_master_volume_percent.load",
+    "g_audio_master_muted.load",
+    "muted ? 0.0f",
+    "sdl_audio_gain_ramp",
+):
+    require(token in master_gain,
+            f"host-output gain stage is missing {token}")
+drc_callback = function_body(main_cpp, "sdl_drc_callback")
+require(drc_callback.index("rab_pull") <
+        drc_callback.index("sdl_audio_apply_master_gain") <
+        drc_callback.index("audio_trace_pcm"),
+        "bridge audio must apply master gain at the final host-output boundary")
+audio_pump = function_body(main_cpp, "sdl_audio_pump")
+require(audio_pump.index("sdl_audio_fadein_left") <
+        audio_pump.index("sdl_audio_apply_master_gain") <
+        audio_pump.index("psx_sdl_audio_queue("),
+        "legacy audio must apply master gain after transition fade and before queueing")
+audio_update = function_body(main_cpp, "sdl_audio_update")
+require(audio_update.index("sdl_audio_apply_master_gain") <
+        audio_update.index("psx_sdl_audio_queue("),
+        "the legacy turbo-mute tail must retain the selected master gain")
+require(main_cpp.index("us.has_master_volume") <
+        main_cpp.index("psx_sdl_audio_open") and
+        main_cpp.index("us.has_audio_muted") <
+        main_cpp.index("psx_sdl_audio_open"),
+        "persisted host-audio controls must load before the audio device opens")
+
 for function_name in ("on_runtime_ready", "on_runtime_shutdown"):
     session_body = function_body(menu, function_name)
     require("disruptor_billboard_aspect_all_site_mask" in session_body and

@@ -1,6 +1,7 @@
 #include "gte.h"
 #include "cpu_state.h"
 #include "gte_precision.h"
+#include "mod_memory.h"
 #include <algorithm>
 #include <cstdlib>
 #include <cstdio>
@@ -250,6 +251,7 @@ enum PrecisionWordDomain : uint8_t {
     PRECISION_WORD_DOMAIN_NONE = 0,
     PRECISION_WORD_DOMAIN_MAIN_RAM = 1,
     PRECISION_WORD_DOMAIN_SCRATCHPAD = 2,
+    PRECISION_WORD_DOMAIN_GPU_DMA = 3,
 };
 #define PRECISION_STORE_PC_ROUTE_MAX 32u
 struct PrecisionStorePcRoute {
@@ -376,7 +378,13 @@ static inline int precision_ram_address(uint32_t addr, uint32_t *physical) {
      * and must never alias a low-RAM provenance entry. */
     if (addr >= 0xC0000000u) return 0;
     uint32_t mapped = addr & 0x1FFFFFFFu;
-    if (mapped >= 0x00800000u) return 0;
+    if (mapped >= 0x00800000u) {
+        if (mapped < PSX_MOD_GPU_DMA_APERTURE_BASE ||
+            mapped > PSX_MOD_GPU_DMA_APERTURE_BASE +
+                     PSX_MOD_GPU_DMA_APERTURE_SIZE - 4u) return 0;
+        *physical = mapped & ~3u;
+        return 1;
+    }
     *physical = mapped & 0x1FFFFCu;
     return 1;
 }
@@ -501,6 +509,25 @@ extern "C" void gte_precision_main_ram_word_committed(uint32_t physical) {
     s_precision_word_commit.physical = physical;
     s_precision_word_commit.domain = PRECISION_WORD_DOMAIN_MAIN_RAM;
     s_precision_word_commit.pending = 1;
+}
+
+/* Only memory.c arms this domain, after an allocated aperture word commits.
+ * A renderer lookup cannot alias this address with a folded main-RAM word. */
+extern "C" void gte_precision_gpu_dma_word_committed(uint32_t physical) {
+    if (physical < PSX_MOD_GPU_DMA_APERTURE_BASE ||
+        physical > PSX_MOD_GPU_DMA_APERTURE_BASE +
+                   PSX_MOD_GPU_DMA_APERTURE_SIZE - 4u || (physical & 3u)) {
+        gte_precision_word_write_begin();
+        return;
+    }
+    s_precision_word_commit.physical = physical;
+    s_precision_word_commit.domain = PRECISION_WORD_DOMAIN_GPU_DMA;
+    s_precision_word_commit.pending = 1;
+}
+
+static int precision_memory_commit_matches(uint8_t domain, uint32_t physical) {
+    return domain == (physical < 0x00200000u ?
+        PRECISION_WORD_DOMAIN_MAIN_RAM : PRECISION_WORD_DOMAIN_GPU_DMA);
 }
 
 extern "C" void gte_precision_scratch_word_committed(uint32_t physical) {
@@ -733,7 +760,7 @@ extern "C" void gte_precision_store_word(uint32_t addr, uint8_t reg) {
     uint32_t physical;
     if (!precision_ram_address(addr, &physical)) return;
     int commit_matches = committed &&
-        committed_domain == PRECISION_WORD_DOMAIN_MAIN_RAM &&
+        precision_memory_commit_matches(committed_domain, physical) &&
         committed_physical == physical;
 #ifdef PSX_GTE_REGISTER_TEST
     /* The pinned standalone register fixture links gte.cpp without memory.c
@@ -773,7 +800,7 @@ extern "C" void gte_precision_store_pc_word(
     ++s_precision_diagnostics.registered_store_attempts;
     uint32_t physical;
     if (!precision_ram_address(addr, &physical)) return;
-    if (!committed || committed_domain != PRECISION_WORD_DOMAIN_MAIN_RAM ||
+    if (!committed || !precision_memory_commit_matches(committed_domain, physical) ||
         committed_physical != physical) {
         ++s_precision_diagnostics.store_uncommitted_rejections;
         return;
@@ -859,7 +886,7 @@ extern "C" void gte_precision_copy_pc_word(
     if ((addr & 3u) != 0u) return;
     uint32_t physical;
     if (!precision_ram_address(addr, &physical)) return;
-    if (!committed || committed_domain != PRECISION_WORD_DOMAIN_MAIN_RAM ||
+    if (!committed || !precision_memory_commit_matches(committed_domain, physical) ||
         committed_physical != physical) {
         ++s_precision_diagnostics.store_uncommitted_rejections;
         return;

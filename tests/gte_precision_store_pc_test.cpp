@@ -1,5 +1,6 @@
 #include "cpu_state.h"
 #include "gte_precision.h"
+#include "mod_memory.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -948,9 +949,47 @@ int test_perspective_depth_validity_propagates() {
     return 0;
 }
 
+int test_enhancement_packet_provenance() {
+    const uint32_t destination = PSX_MOD_GPU_DMA_GUEST_BASE + 0x14000u;
+    reset_fixture();
+    if (!add_capture() || !add_store()) return fail("DMA arena routes missing");
+    capture();
+    gte_precision_word_write_begin();
+    gte_precision_main_ram_word_committed(destination & 0x1FFFFFu);
+    store(kStorePc, destination);
+    if (lookup(destination)) return fail("aperture accepted an aliased RAM token");
+    capture();
+    gte_precision_word_write_begin();
+    gte_precision_gpu_dma_word_committed(destination & 0x1FFFFFFFu);
+    store(kStorePc, destination);
+    if (!lookup(destination) || perspective_lookup(destination) !=
+            GTE_PRECISION_LOOKUP_ACCEPTED)
+        return fail("relocated packet lost geometry or perspective depth");
+    if (lookup(destination & 0x1FFFFFu))
+        return fail("aperture provenance aliased main RAM");
+    gte_precision_invalidate_word(destination + 1u);
+    if (lookup(destination)) return fail("aperture byte write kept stale provenance");
+    const CopyRoute &route = kScratchCopyRoutes[0];
+    reset_fixture();
+    if (!add_capture(kOtherMfc2Pc) || !add_scratch_store() || !add_copy(route))
+        return fail("DMA arena scratch-copy routes missing");
+    capture(kOtherMfc2Pc);
+    scratch_commit(kScratchFirst);
+    scratch_store(kScratchFirst);
+    copy_read(route, kScratchFirst);
+    gte_precision_word_write_begin();
+    gte_precision_gpu_dma_word_committed(destination & 0x1FFFFFFFu);
+    copy_store(route, destination);
+    if (!lookup(destination)) return fail("scratch projection did not reach DMA arena");
+    gte_precision_timeline_invalidate();
+    if (lookup(destination)) return fail("timeline restore retained aperture provenance");
+    return 0;
+}
+
 }  // namespace
 
 int main() {
+    if (int rc = test_enhancement_packet_provenance()) return rc;
     if (int rc = test_registration_and_committed_store()) return rc;
     if (int rc = test_captured_snapshot_and_multiple_stores()) return rc;
     if (int rc = test_fail_closed_paths()) return rc;

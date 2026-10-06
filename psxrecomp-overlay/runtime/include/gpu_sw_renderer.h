@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 /* Maximum internal-resolution supersampling factor (linear, per axis). */
-#define SW_MAX_INTERNAL_SCALE 4
+#define SW_MAX_INTERNAL_SCALE 8
 
 /* Initialize software renderer */
 void sw_renderer_init(uint16_t* vram);

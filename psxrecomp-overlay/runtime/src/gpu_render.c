@@ -29,6 +29,7 @@ static const GpuRenderBackend SW_BACKEND = {
     .set_world_triangle            = NULL,
     .set_precise_triangle          = sw_set_precise_triangle,
     .set_perspective_triangle      = NULL,
+    .set_temporal_depth_triangle   = NULL,
     .set_presentation_yaw          = NULL,
     .fill_rect                     = sw_fill_rect,
     .copy_rect                     = sw_copy_rect,
@@ -123,6 +124,11 @@ void gr_set_perspective_triangle(int enabled,
                                  float q0, float q1, float q2) {
     if (g_b->set_perspective_triangle)
         g_b->set_perspective_triangle(enabled, q0, q1, q2);
+}
+void gr_set_temporal_depth_triangle(int enabled,
+                                     float z0, float z1, float z2) {
+    if (g_b->set_temporal_depth_triangle)
+        g_b->set_temporal_depth_triangle(enabled, z0, z1, z2);
 }
 void gr_set_presentation_yaw(double yaw_units, double full_turn,
                              double center_x, double center_y,
