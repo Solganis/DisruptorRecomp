@@ -1,549 +1,85 @@
 # DisruptorRecomp
 
-<img width="1270" height="635" alt="2" src="https://github.com/user-attachments/assets/eaea752d-cf39-4ac8-9df1-b2447ab3c9d3" />
+<img width="1270" height="635" alt="Disruptor Recompiled" src="https://github.com/user-attachments/assets/eaea752d-cf39-4ac8-9df1-b2447ab3c9d3" />
 
+A native PC static recompilation of **Disruptor (USA, SLUS-00224)**, built on
+[PSXRecomp](https://github.com/mstan/psxrecomp). The original PlayStation code
+is translated ahead of time and compiled into a native executable.
 
-A native PC static recompilation project for **Disruptor (USA, SLUS-00224)**,
-built on [PSXRecomp](https://github.com/mstan/psxrecomp).
+**In development.** Windows x64 is the primary target. This source repository
+contains no game data or prebuilt game executable. You must supply the supported
+disc revision; the redistributable OpenBIOS backend is used for booting.
 
-The original PlayStation MIPS code is translated ahead of time to C locally and
-compiled into a native x64 executable. PSX hardware services are supplied by a
-purpose-built compatibility runtime, with the redistributable PCSX-Redux
-OpenBIOS backend. It is therefore a native static recompilation, not an emulator
-wrapper, and it is not a source-code decompilation or conventional source port.
-It is not yet a public release.
+## Features
 
-No proprietary PlayStation BIOS is bundled or required.
+- OpenGL rendering at 1x–8x internal resolution, with 4x as the default.
+- Optional widescreen: 16:9, 21:9, 32:9, or Match window. Menus and movies stay
+  at 4:3, and the HUD retains its proportions.
+- Optional geometry and perspective-texture correction.
+- Keyboard/controller input and optional modern WASD/mouse controls.
+- Experimental vertical mouse look and weapon aim.
+- In-game settings for controls, display, fullscreen, VSync, volume, and mute.
+- Memory-card saves and twelve save-state slots.
 
-## Current result
+Frame interpolation is currently disabled.
 
-- The supported disc boots through OpenBIOS into natively translated resident
-  game code and captured runtime overlays.
-- Menus, intros, FMVs, audio, input, and the complete first level have been
-  exercised on native Windows.
-- The corrected packaged execution path holds approximately 59.94 updates per
-  second through menus, movies, and gameplay, with clean audio in the latest
-  user validation.
-- OpenGL geometry supersampling defaults to 4x internal scale (2560x1920 at
-  authentic 4:3) and can be switched live from 1x through 8x in the settings
-  menu. A Windows test supplied 120 steady-state one-second samples
-  from 59.52 to 60.37 Hz, averaging 59.94 Hz.
-- Opt-in modern controls combine direct horizontal mouse turning with WASD,
-  mouse fire/psionic buttons, and conventional keyboard action bindings.
-- Experimental vertical mouse look now shifts Disruptor's own projection
-  horizon through a version-pinned camera extension and applies the matching
-  slope to newly-created player projectiles. It is suspended during map,
-scripted-camera, inactive-player, replay, and netplay states; live gameplay
-validation is still pending.
-- An experimental projection-and-stretch 16:9 mode now widens Disruptor's
-  upstream yaw frustum while preserving its original portal-coordinate domain.
-  The HUD is corrected, and menus and movies remain pillarboxed.
-- Widescreen rendering now uses two separate 512 KiB primitive buffers. Dense
-  ultrawide views could exceed the retail 68 KiB buffers, overwrite texture
-  descriptors and eventually freeze gameplay. The replacement preserves GPU
-  linked-list addressing, geometry/perspective correction and save states.
-  The user confirmed a clean first-training-level retest at 8x and 32:9.
-- Modernisation Test 12 adds an opt-in presentation surface whose corrected
-  vertices must match the exact RAM addresses of their GTE projection stores.
-  Whole quads and fractional camera yaw share the same all-or-nothing gate;
-  the ambiguous rounded-screen-coordinate lookup from Test 11 is gone.
-- Archived Test 12 telemetry later showed that every corrected mode accepted
-  zero precise triangles. The missing Test 11 fractures therefore came from
-  the safe canonical fallback, not from a working exact-geometry correction;
-  the visual comparison could not answer whether retained precision reduces
-  wobble.
-- Test 13 Phase A hardens full-address provenance, separates canonical and
-  presentation coordinates, adds full X/Y yaw and a coverage tint as
-  independent opt-ins, and records detailed live-frame coverage diagnostics.
-  Its first live diagnostic run exposed the zero-coverage problem directly:
-  Disruptor materializes GTE SXY2 through MFC2 plus ordinary SW, not SWC2.
-- Linux and Windows x64 builds compile successfully against the pinned
-  framework and reviewed project overlay. The current Windows build includes a
-  bounded route that snapshots two reviewed MFC2 reads and publishes them from
-  seven reviewed post-write SW hooks. A gameplay retest proved that route is
-  active: by frame 6000 it recorded 3,180,703 registered-store attempts,
-  3,089,210 accepts, and 48,527 packed-value rejections. It still accepted zero
-  of 2,252,468 candidate vertices, however, with 2,246,520 store misses, and the
-  user saw no visual difference.
-- Static tracing explained that gap. The seven source stores populate
-  projected-vertex buffers; four exact loads at `0x80046c4c`,
-  `0x80046c50`, `0x80046c54`, and `0x80046c60` later copy its SXY words into a
-  GP0 `0x3c` packet through stores at `0x80046d04`, `0x80046d08`,
-  `0x80046d10`, and `0x80046d0c`. The first copy bridge is intentionally
-  bounded to those raw opcodes and committed writes. It propagates existing
-  exact provenance across that copy; it is neither a packed-coordinate
-  fallback nor a general MIPS register-taint system.
-- The subsequent live run proved that correction reached the renderer:
-  3,133,256 of 3,644,820 candidate vertices (85.965%) were accepted, and the
-  user reported that geometry wobble appeared improved or gone. Textures still
-  warp because perspective-correct texture interpolation is a separate phase.
-  At the photographed ramp, 117 GP0 `0x3c` quads were corrected beside 69
-  canonical quads, exposing thin seams between the two presentations.
-- Telemetry and static tracing identify those 69 quads with a second, bounded
-  path: nine exact projection words are written to scratchpad slots
-  `0x1f800084..0x1f8000c4`, then 20 exact LW/SW pairs build up to five packet
-  variants. That scratchpad bridge is now implemented with distinct commit
-  domains and 24 total packet-copy routes. The generated-code audit, focused
-  fail-closed test, Windows x64 build, and all nine root CTests pass. The
-  same-ramp retest almost completely removed the gaps. At frame 13,740 the
-  ongoing run had accepted 4,416,280 of 4,775,680 candidates (92.474%); a stable
-  60-frame interval accepted 20,400 of 21,240 (96.045%). A fleeting one-pixel
-  sliver can remain at a screen edge, and is accepted as a minor residual for
-  now rather than risking broad polygon expansion.
-- A separate perspective-texture experiment is now implemented and opt-in. It
-  uses stricter retained-depth evidence than geometry correction, preflights
-  each textured quad as one unit, and applies reciprocal-depth interpolation
-  only to the corrected OpenGL presentation mirror. Canonical VRAM, HUD,
-  sprites, and fail-closed polygons remain affine. The Windows x64 build and
-  all ten root CTests pass. In the live A/B, the user reported that textures
-  were definitely better, with only mild wobble in certain areas. Telemetry
-  recorded 3,509,462 perspective-correct triangles (92.496% of world
-  triangles); the remaining localized wobble aligns with deliberately affine
-  provenance fallbacks. The
-  separate fractional-camera-yaw experiment currently keeps texture mapping
-  affine for the whole polygon rather than mixing projective depth at an edge.
+## Build and run
 
-See [STATUS.md](STATUS.md) for the evidence and open work,
-[DISC.md](DISC.md) for supported binary identities, and
-[docs/MODERNISATION-TEST-13-PHASE-A.md](docs/MODERNISATION-TEST-13-PHASE-A.md)
-for the current source experiment and private comparison procedure.
+Install Git, Python 3, CMake 3.20+, and a Windows x64 C++ toolchain. Visual Studio
+with **Desktop development with C++** is supported; Ninja is recommended.
 
-## Repository layout
+Place these files from your own supported disc in `input/`:
 
-- `src/`, `tools/`, `tests/`, and the root-level TOML files contain
-  project-authored source, generation tools, deterministic tests, and guarded
-  patch configuration.
-- `psxrecomp-overlay/` is the reviewed framework overlay applied automatically
-  on top of the revision in `PSXRECOMP_PIN`; the explicit
-  `PSXRECOMP_OVERLAY_FILES.txt` manifest prevents local artifacts from being
-  copied into the framework.
-- `test12-launcher/` preserves the source-only launch and collection scripts
-  used for the Test 12 comparison.
-- `test13-launcher/` contains the guarded five-mode Phase A comparison
-  launcher. It requires source identity, a matching executable checksum, and
-  confirmation that the 4x OpenGL pipeline actually became ready.
-- `input/`, `generated/`, `psxrecomp/`, and build directories are local-only
-  and excluded from Git.
+- `SLUS_002.24`
+- `Disruptor (USA).cue` and the `.bin` track it references
 
-## Files you must supply
+Check the required hashes and disc format in [DISC.md](DISC.md). Then run from
+an x64 developer PowerShell:
 
-Copy these from your own Disruptor disc into input/:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+.\run.ps1
+```
 
-1. SLUS_002.24 — SHA-256 must be
-   48e8c3143b7f5de10340c9d4a9bac8cb7e97c15eda7a0897d3cf337ad96cb2c4.
-2. The original Mode 2 .bin track and its .cue file. The default expected cue
-   filename is Disruptor (USA).cue.
+To enable modern controls, widescreen, and texture/geometry correction at launch:
 
-The verified BIN is 636,350,064 bytes with SHA-256
-3b49f9874e30c613ca9d17720716764cd76d0ac968c0acd0f53159366c0cf3a4.
-See DISC.md for the CUE and transfer-archive hashes.
+```powershell
+.\run.ps1 -ModernControls -Widescreen -GeometryCorrection -PerspectiveTextures
+```
 
-Do not convert the disc to a cooked 2048-byte ISO: PlayStation streaming audio
-and video depend on the original Mode 2 sector layout.
+The validated private gameplay build also uses captured overlay code that is
+excluded from this repository. A fresh source build is not yet equivalent to
+that package. See [build details](docs/BUILD.md) for this limitation, Linux
+instructions, and test commands.
 
-## Windows build
+## Controls and settings
 
-Install Git, CMake 3.20+, Python 3, and either Visual Studio 2022 with Desktop
-development with C++ or an MSYS2 MinGW-w64 toolchain. Ninja is recommended.
+Press **backquote** (`` ` ``) to open settings; **Escape** closes them. Gameplay
+continues while the menu is open, but game input is blocked.
 
-From PowerShell:
+With modern controls enabled: **WASD** moves, **left mouse** fires, **right
+mouse** uses psionics, **Space** jumps, and **E** interacts. **Middle-click**
+captures the mouse; middle-click or Escape releases it. Add `-VerticalLook` to
+enable experimental vertical aim.
 
-    powershell -ExecutionPolicy Bypass -File .\build.ps1
-    .\run.ps1
+**Alt+Enter** toggles fullscreen. **Shift+F1–F12** saves a state;
+**F1–F12** loads it. Save states require a matching build and supported game.
 
-The build script verifies the supplied executable, checks out the pinned
-framework, applies the reviewed framework overlay, generates the private
-translated code and OpenBIOS sources, audits the result, and builds
-DisruptorRecompiled.exe.
+Controls, Enhancements, Cheats, and System are the available settings tabs.
+Preferences are stored in `settings.toml` beside the executable. Explicit launch
+options override saved preferences for that run. God Mode resets off on launch.
+Granting all weapons and psionics marks the game as cheated and carries that
+consequence into subsequent game saves.
 
-The validated private first-level path also uses a captured static overlay.
-When a private regeneration has produced `generated/overlays_static.c`, CMake
-detects and links it automatically. That retail-derived file is deliberately
-absent from this repository; a checkout without it is not equivalent to the
-validated private package.
+## Status and documentation
 
-Modern controls and 16:9 rendering are opt-in:
+The first mission has been exercised on Windows. The recent 8x / 32:9 training
+retest and save-state restart check passed after fixing an ultrawide rendering
+buffer overflow. Full campaign and release validation remain incomplete; minor
+geometry and texture artifacts can remain.
 
-    .\run.ps1 -ModernControls -Widescreen
-
-The current presentation-only geometry and perspective-texture experiment is
-also opt-in:
-
-    .\run.ps1 -ModernControls -Widescreen -GeometryCorrection -PerspectiveTextures
-
-For a texture-only A/B comparison that keeps corrected geometry enabled, omit
-`-PerspectiveTextures` from the second run. Perspective correction remains
-affine automatically for HUD, sprites, invalid-depth vertices, and polygons
-without exact provenance.
-
-The first vertical-camera test should use:
-
-    .\run.ps1 -ModernControls -VerticalLook
-
-Mouse up looks up and mouse down looks down. The camera is deliberately limited
-to about +/-30.94 degrees. Native target-assisted aim remains authoritative;
-otherwise newly-created normal and psionic projectiles receive the same bounded
-vertical slope as the view. This is an experimental, game-specific extension:
-test room edges, actors near the top and bottom of the view, weapon fire, map,
-pause, death, scripted cameras, and a level transition before treating it as a
-finished control feature.
-
-Developer-only differential lockstep diagnostics temporarily freeze/suspend
-the extension so their compiled and interpreted halves compare the retail
-machine state symmetrically. The next ordinary render resumes the requested
-pitch.
-
-Enter gameplay, middle-click to capture, move left/right to turn, and
-middle-click or press Esc to release. Edit mouse-aim.ini to adjust sensitivity
-or invert the horizontal direction. The features can also be tested separately
-with `-ModernControls`, `-MouseAim`, or `-Widescreen`.
-
-## Linux development build
-
-With GCC, CMake, Python and optionally Ninja installed:
-
-    chmod +x build.sh run.sh tools/regen.sh
-    ./build.sh
-    ./run.sh
-
-Use `./run.sh --modern-controls --widescreen --geometry-correction
---perspective-textures` for the combined opt-in test.
-Linux is primarily a compiler and diagnostic target; Windows remains the
-release target.
-
-## In-game settings
-
-The OpenGL build includes a host-side settings menu. Press the backquote key
-(`` ` ``) to open or close it; Escape also closes it. The menu releases relative
-mouse capture while open, blocks game input, and restores the previous capture
-state when closed. Guest execution continues while the menu is open.
-
-Controls contains horizontal mouse aim, modern controls, both axis
-sensitivities/inversion, vertical look and recentering. Enhancements contains
-widescreen with fixed 16:9, 21:9 and 32:9 choices plus Match window, a live
-1x-8x internal-resolution selector, exact geometry, perspective textures and
-VSync. The default internal resolution remains 4x. Internal resolution is saved
-and restored on the next launch; GPU fill and memory costs grow with the square
-of the scale, and a failed live allocation retains the previous renderer.
-Cheats contains session-only God Mode and the confirmed retail All Weapons
-and psionics action. System contains window/fullscreen mode, master volume,
-mute and settings-save status. Alt+Enter remains a transient window-mode toggle.
-
-The Diagnostics tab, sprite-path isolation, skyline depth probes, draw-distance
-and distance-shading controls, and sub-byte camera presentation option are
-removed for public-build preparation. Sprite repair keeps all reviewed paths
-enabled; skyline coverage and sub-byte camera presentation are reset off, and
-experimental distance/shading reset to Retail at each menu runtime boundary.
-Old saved camera preferences are no longer applied. Frame interpolation remains
-compiled out.
-
-God Mode intercepts the game's central player-damage routine without changing
-saved health; it starts off on every launch. **Grant all weapons + psionics**
-also refills their resources and deliberately reproduces the retail cheat
-consequence: the current game is marked as cheated, which changes the ending
-message and is carried into subsequent memory-card/password saves. The menu
-requires confirmation before applying that irreversible gameplay action.
-
-Reviewed live settings are persisted in the user-owned `settings.toml` beside
-the executable (the development build uses `build/settings.toml`). Saves merge
-only fields changed in the menu and publish through an atomic replacement, so
-an I/O failure leaves the previous file intact. Explicit launch switches or
-environment values override saved preferences for that run. Mouse aim, modern
-controls, vertical-look enablement, both axis sensitivities/inversion,
-display aspect, internal resolution, window mode, exact
-geometry, perspective textures, VSync, master volume and mute persist; the
-current pitch does not.
-Menu layout/open state and mouse capture never persist. Experimental draw distance and distance shading also return to retail
-settings on every launch.
-
-Dear ImGui renders on the main OpenGL context. Normal settings do not
-write PlayStation RAM or VRAM; the Cheats tab is isolated behind narrow,
-version-pinned gameplay APIs with its save effects stated above. Configure with
-`-DDISRUPTOR_DEV_MENU=OFF` to omit the menu and its integrity-pinned Dear ImGui
-dependency.
-
-### Suspended draw-distance experiment
-
-The following records the earlier experiment; its controls are no longer
-available in the settings menu.
-
-The draw-distance experiment substitutes the values returned by thirteen exact,
-version-pinned renderer loads. It never changes the game's authoritative
-draw/fade globals, so memory-card data and savestates retain the retail values;
-loading a savestate only abandons the in-progress diagnostic sample. The two
-setup loads that feed guest stores, and unrelated gameplay loads of the same
-globals, are deliberately excluded. The experiment still needs broader validation:
-larger presets can expose level voids, portal/culling omissions, inactive
-distant actors, primitive-packet pressure, or increased frame time. Earlier testing used
-1.25x on a repeatable view and 1.5x only after the lower preset was clean.
-The first live 1.5x diagnostic captured source/effective far `1024 / 1536`,
-source/effective fade start `256 / 768`, and 39,421 substitutions over 679
-completed frames. A later fixed-view A/B proved that the extension changed
-renderer decisions: four visible-room spans became eight, traversal depth rose
-from two to three without hitting the recursion cap, 1,450 of 2,610 final
-portal tests and 1,156 of 4,335 object tests changed from retail rejection to
-acceptance. Packet output in that view grew by only 120 bytes, explaining why
-the terrain captures remained nearly identical, while a distant pickup became
-visible only at the extended distance. The flat mustard field includes a
-level-authored PSYQ `DRAWENV` clear (observed RGB `181,156,49`), and the
-executable uses no GTE depth-cue commands. However, a later 25x test still left
-distant terrain and structures merging into that yellow field. The remaining
-terrain palette/visibility path is therefore unresolved and is intentionally
-parked while camera feel and gameplay cadence are addressed. A missed live
-billboard CLUT-row pass was subsequently added to the distance-shading
-override.
-
-## Mouse implementation
-
-Dynamic left/neutral/right correlation and static instruction tracing identify
-0x80077624 as Disruptor's 8-bit wrapping player/camera yaw. The game copies it
-with player coordinates, indexes sine/cosine tables from it, and adds its normal
-controller-derived turn delta directly to it.
-
-src/disruptor_mouse_aim.cpp converts relative host mouse X movement into that
-same yaw. It uses nearest-step error diffusion: each authoritative byte update
-keeps at most half a yaw unit of signed error for the next sample, rather than
-letting a nearly complete unit accumulate and arrive as a larger-feeling
-threshold jump. This is not a temporal average, so it adds no smoothing tail;
-total mouse distance and the sub-byte presentation residual remain exact. The
-original camera, collision, movement, and renderer consume the byte result.
-Mouse Y can independently
-drive a signed host pitch. Because the retail game has no pitch variable,
-src/disruptor_vertical_camera.cpp moves the shared 120-pixel projection horizon,
-patches only audited CPU screen-Y/culling results, and restores neutral GTE
-state after each world render. Exact PC and opcode guards cover the resident
-native and dirty-interpreter paths; zero pitch is an identity.
-
-The same quantised horizon supplies projectile slope, keeping unaided shots
-aligned with the centre of the view without changing horizontal speed. Native
-target-assisted aim is left untouched. New vertical input is ignored during
-scripted or non-gameplay views while the requested pitch is preserved, and the
-session starts centred. Initial live camera, aim and transition checks passed.
-It remains experimental until world-edge and full-campaign coverage has been
-exercised.
-
-The modern layout is W/S forward/back, A/D strafe, Space jump, E use, F
-psionic, Q/R weapon/psionic selection, Tab map, P pause, left mouse fire, and
-right mouse psionic. Arrow keys and Enter remain menu fallbacks. Mouse actions
-only reach the game while the mouse is captured.
-
-The released pointer operates the host settings menu and is consumed before it
-can reach gameplay.
-
-## Gameplay frame cadence
-
-The host VBlank, input sample, pacer and presentation path already run at about
-59.94 Hz. Disruptor deliberately limits the outer live loop to one completed
-render for every two VBlanks: `func_80043404` reads the VSync counter at
-`0x80043E84`, tests `current - baseline < 2` at `0x80043E90`, and waits for a
-second VBlank at `0x80043E9C` when necessary. Unique camera/world images
-therefore advance at about 29.97 Hz even though diagnostics and the window
-report about 60 presented FPS.
-
-The simulation side is subtler and more promising than a simple 30 Hz game.
-The measured VBlank delta is retained in `$s5`; on the next outer iteration,
-`0x80043A90`-`0x80043ABC` calls the substantive gameplay tick once per elapsed
-VBlank (normally twice) before the single world render at `0x80043B70`.
-Disruptor is therefore very likely batching two existing 60 Hz fixed-step
-updates behind each 30 Hz render. A guarded experiment that changes only the
-minimum elapsed-VBlank test from two to one should de-batch this into one tick
-plus one render per VBlank rather than double gameplay speed. It still needs
-instrumentation and state-delta validation because render-side effects,
-double-buffering, scripted modes, CD/audio scheduling and special branches may
-assume the retail batching. The next phase will count VBlanks, gameplay ticks,
-yaw stores, renderer entries, display-base flips and dirty presents over a
-fixed 600-VBlank window before enabling that experimental patch.
-
-## Experimental geometry inter-frame interpolation
-
-Frame interpolation is deactivated for now. Disruptor builds define
-`PSX_DISABLE_FRAME_INTERPOLATION=1`, which omits the interpolation shaders,
-history textures, temporal capture and worker. Settings, environment overrides
-and mod APIs cannot activate it, including with `DISRUPTOR_DEV_MENU=OFF`.
-Software smoothing and frame blending are also disabled. The interpolation
-controls, saved preference updates and related debug statistics are removed
-from the menu. The Diagnostics tab and other experimental probes have also
-been removed for public-build preparation.
-
-The experimental source and deterministic math tests are retained for future
-work. The following describes the suspended implementation.
-
-The renderer retains world triangles from successive source frames and redraws
-world geometry at intermediate screen positions. The HUD stays sharp at its
-current position. Conservative triangle matches seed previous vertex positions
-after checks on material, correspondence, motion, shape and depth continuity.
-The repair shares that motion across neighboring current triangles, including
-neighbors without a complete triangle match. Adjacency uses exact current
-screen coordinates and independent, unnormalized GTE depth; the texture
-shader's per-polygon normalized reciprocal depth stays separate. This prevents
-different texture-depth scales from splitting an otherwise shared vertex.
-
-Conflicting motion candidates hold the shared vertex at its current position
-across all adjoining triangles. Triangle-safety failures propagate that hold
-through shared vertices so neighboring triangles keep the same edge positions.
-Tiny or ineligible world faces also anchor their shared vertices. Ambiguity
-and depth-bridge checks prevent unknown-depth connections from joining
-incompatible known-depth groups. For a recognized T-junction, two edges A-M
-and M-B meet a longer A-B edge; the guard locally anchors A, M and B after
-confirming position and depth agreement. The check applies to vertices with at
-most 16 neighbors and preserves the original real-frame positions. Unsafe scenes fall
-back to the current completed frame.
-
-These guards can leave some geometry unsmoothed. Primitives without world
-provenance (`world == 0`), unrecognized T-junctions and clipping transitions
-remain potential limitations. A broader live retest is still needed before
-claiming that all reported seams are resolved.
-
-This is presentation geometry interpolation, not full game-state, camera or
-object simulation interpolation. Simulation, input and audio keep their
-existing cadence. Interpolated world motion adds about one source-frame of
-visual delay, so it does not solve the retail gameplay/render batching
-described above. Legacy **Linear crossfade** and **Motion-adaptive clarity**
-blend completed images and can ghost; they are also deactivated in the current
-Disruptor build.
-
-The suspended implementation used `PSX_GL_INTERP_DIAG=1` to log capture and
-presentation cadence plus geometry scene counts, redraws, fallback captures
-and matched world triangles. This override is inactive in the current build. Mesh
-diagnostics also report moving triangles, seeded/shared vertices, propagated
-corners, conflicts, held vertices and anchored T-junctions. A high presentation
-rate alone does not show how much world geometry is being interpolated; use
-those counters alongside a repeatable live visual check.
-
-Replaying a captured moving Mission 1 scene through the final repair covered
-1,338 world triangles and 778 groups of shared screen-position/depth vertices.
-At `alpha=0.5`, the original independent triangle motion split 405 groups by
-more than one native pixel, with a maximum gap of 14.728902 pixels. The repair
-produced zero gaps within those shared groups. Five depth-confirmed T-junctions
-checked at `alpha=0.25`, `0.5` and `0.75` retained only their original real-frame
-deviation, at most 0.009517 native pixels, with zero added gap. In that snapshot,
-642 triangles retained motion and 504 unmatched corners received shared motion.
-
-An independent capture from the final live run contained 1,324 world triangles
-and 774 shared groups. Its 399 groups split by more than one native pixel in
-the baseline (max 12.13705 pixels) also became zero shared-group gaps. Four
-depth-confirmed T-junctions had zero added gap; their original real-frame
-deviation was at most 0.009456 native pixels.
-
-The final Mission 1 run at 4x internal resolution and a 120 FPS target included
-turning and forward movement. Ordinary intervals recorded 29.95-30.15 scene
-captures/s and 120 presentations/s, with a guest frame interval averaging
-16.684 ms and zero sampled GL errors. The bounded diagnostic readback interval
-averaged 118.94 presentations/s. Final `alpha=1` endpoint comparisons each
-found 1 of 1,228,800 RGB pixels with a channel delta greater than 1, with a
-maximum channel delta of 7 and no GL error. That small raster difference remains;
-the result is not bit-exact. Endpoint comparisons alone cannot establish
-artifact-free intermediate frames or replace the pending broader visual retest.
-
-The suspended implementation also used `PSX_GL_TEMPORAL_VERIFY=1` for three
-expensive GPU endpoint readback comparisons. This probe is inactive in the
-current build.
-
-## Widescreen implementation
-
-game-widescreen.toml selects the classic projection-and-stretch 16:9 path at
-launch. The in-game Enhancements tab can now switch the same runtime live
-between 4:3, fixed 16:9, 21:9 and 32:9, or Match window. Match window follows
-arbitrary host-window ratios while clamping the rendered view to the audited
-4:3..32:9 range. Every selection is applied only after the current frame has
-presented, updates the window/compositor and projection as one transition, and
-is saved to `settings.toml`; choosing a fixed ratio disables adaptive matching.
-Disruptor's static world uses a yaw-dependent CPU portal projection in addition
-to ordinary GTE geometry. The corrected private Test 8B capture identified the
-upstream visibility seeds at 0x80040FE8 and 0x80040FF0: wrapping eight-bit
-camera-yaw rays at +/-32 units (a 45-degree 4:3 half-field). At 16:9 those
-offsets widen geometrically to about +/-38 units. Four signed horizontal
-side-plane comparisons at 0x8003B8EC, 0x8003B8F8, 0x8003BD00, and 0x8003BD0C
-receive the matching aspect adjustment; their vertical counterparts remain
-unchanged.
-
-Nine exact final screen-X sites still receive the same 3/4 projection squash
-as the GTE, and the resulting 320x240 gameplay image is presented at 16:9.
-Every downstream portal span, clamp, outcode, packed coordinate, and wall load
-remains in the original unsigned [0,320] domain. This avoids the
-rotation-dependent corruption caused by feeding native-wide coordinates into
-the static-world renderer. Every helper is an identity in 4:3. The HUD is
-proportion-corrected before presentation, while depth-24 FMVs, BIOS output,
-and full-screen 2D menu scenes remain pillarboxed at 4:3.
-
-Disruptor also builds enemies, pickups, and several related world billboards
-as CPU-projected `POLY_FT4` packets. Their centres used the nine X hooks above,
-but their retail pixel widths bypassed both the GTE and HUD-SPRT correction, so
-they appeared increasingly wide at 16:9, 21:9, and 32:9. Six exact packet-
-completion/submission sites now attach host-only provenance to those audited
-funnels, including the deferred sorted-actor pass that builds the base enemy
-quad. Each explicit tag fingerprints all nine completed GP0 words, so a packet
-slot reused by the fixed-screen compositor is rejected immediately rather than
-inheriting a two-frame-old world tag. The existing textured-quad executor scales
-only the matched primitive's X coordinates about its inclusive packet midpoint;
-Y, UVs, guest RAM, HUD, and first-person weapon sprites remain unchanged. The
-generated and dirty-interpreter paths share the same PC/opcode guard, and
-4:3/native-wide presentations are explicit no-ops.
-
-`PSX_WS_FRUSTUM_MODE=yaw` is a diagnostic A/B that enables only the upstream
-yaw-ray widening; the default `full` mode also adjusts the four later object
-side-plane tests. The private capture was analysis input only and remains
-excluded from source, generated output, and all public artifacts.
-
-## Validation boundary
-
-This checkpoint establishes native play through the first level, stable
-real-time pacing and audio, 4x rendering, and a user-validated horizontal mouse
-integration point. Windows testing confirms the first-launch keyboard overlap
-is fixed. Tests 4-6 showed that native-wide portal-span changes cause static
-world geometry to disappear according to camera rotation; Test 7 restored
-stability, and Test 9 safely widened only the upstream yaw frustum and matching
-object side planes while keeping every portal invariant. Test 11 then exposed
-an ambiguous rounded-SXY association in the optional presentation surface.
-Test 12 replaced it with exact packet-address provenance and passed static
-regeneration, deterministic tests, shader parsing, Windows x64 linking, and a
-live A/B comparison. A later audit of those runtime logs found zero accepted
-precise triangles in every corrected mode: the clean image was the canonical
-fallback, so the comparison did not test retained precision at all. Test 13
-Phase A repairs the direct-MMIO alias boundary, makes canonical coordinates
-structurally independent, completes the optional X/Y yaw homography, and adds
-coverage telemetry and tinting. Its first live diagnostic run likewise
-reported 2,934,528 candidate vertices, zero accepted vertices, and 2,913,892
-store misses. The resident code audit found MFC2-to-ordinary-SW projection
-stores. The next gameplay run proved that the resulting two-MFC2/seven-SW
-route was active: by frame 6000 it accepted 3,089,210 registered stores, while
-rejecting 48,527 packed-value changes. It nevertheless accepted zero of
-2,252,468 candidate vertices, 2,246,520 of which were store misses, and looked
-unchanged to the user. Static tracing found the first missed boundary: four
-exact loads and four exact stores copy projected-buffer SXY words into a GP0
-`0x3c` packet. Live testing of that bounded bridge accepted 3,133,256 of
-3,644,820 candidate vertices (85.965%), and the user saw substantially steadier
-geometry. It also exposed thin ramp seams where corrected and canonical quads
-met. The remaining misses scale exactly with a nine-slot scratchpad projection
-loop; 20 audited LW/SW pairs copy those words into alternate packet variants.
-The current build adds that scratchpad route and expands the finite packet
-bridge to 24 pairs, without using packed-coordinate fallback or general GPR
-taint. Generated-code auditing, the focused fail-closed test, and all nine root
-CTests pass. The same-ramp retest almost eliminated the gaps; the user accepts
-the occasional tiny screen-edge sliver as a minor residual. The private
-five-mode comparison remains open.
-Later levels, save/load behavior, live vertical-camera coverage, and broader
-regression testing also remain open.
-
-## Development rules
-
-- Never edit generated/*.c; change configuration, seeds, project code, or the
-  framework and regenerate.
-- Keep input/, generated/, build output, saves, captures, and translated
-  overlays local.
-- Keep modern features opt-in until their authentic path is validated.
-- Compare regressions against the same SLUS-00224 disc in a reference PS1
-  emulator and fix the first observable divergence.
-- Run the deterministic tests and inspect the complete staged file list before
-  committing. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Copyright
-
-The distributable source repository may contain build glue, factual addresses,
-tests, and analysis metadata. It must not contain the game disc, extracted
-assets, proprietary SDK files, generated translations of retail code, or
-captured overlays. Users must generate those privately from a legitimately
-owned copy. The framework overlay is derived from PSXRecomp and retains its
-upstream licensing terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-No separate redistribution license has yet been selected for the
-project-authored source.
+- [Current status and known limits](STATUS.md)
+- [Build details](docs/BUILD.md)
+- [Supported disc revision](DISC.md)
+- [Contributing](CONTRIBUTING.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)

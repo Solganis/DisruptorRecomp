@@ -1,25 +1,12 @@
 # Local game files
 
-This directory is intentionally excluded from version control and release
-archives. Copy files from your own **Disruptor (USA, SLUS-00224)** disc here:
+Copy these files from your own **Disruptor (USA, SLUS-00224)** disc here:
 
-- `SLUS_002.24` — the extracted boot executable.
-- `Disruptor (USA).cue` and its referenced `.bin` track.
+- `SLUS_002.24`
+- `Disruptor (USA).cue` and the `.bin` track named in its `FILE` entry
 
-Verified SHA-256 identities are listed in `../DISC.md`. In particular, the BIN
-must be 636,350,064 bytes and hash to
-`3b49f9874e30c613ca9d17720716764cd76d0ac968c0acd0f53159366c0cf3a4`.
+Check the hashes and MODE2/2352 format in [DISC.md](../DISC.md). Build and run
+instructions are in [docs/BUILD.md](../docs/BUILD.md).
 
-If your disc dump is a split archive such as `Disruptor-disc.7z.001` and
-`.002`, keep every part in one directory and extract the `.001` file with
-7-Zip. It will automatically consume the remaining numbered parts and produce
-the single BIN/CUE pair expected here.
-
-The build creates `SLUS_002.24.code` beside these files as a temporary analysis
-image. It contains only the verified resident-code interval and is safe to
-delete; the retail executable is never changed. Both files remain private and
-must never be staged, committed, or published.
-
-If your cue sheet has a different filename, change `game.disc` in
-`../game.toml`. Do not rename the track referenced *inside* the cue sheet unless
-you update its `FILE` line too.
+This directory's game files and the generated `SLUS_002.24.code` analysis image
+are excluded from Git. Do not commit or distribute them.
