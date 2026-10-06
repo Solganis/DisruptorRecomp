@@ -31,6 +31,9 @@ and double-click **Play Disruptor.cmd**. OpenBIOS is included; no build tools ar
 needed. See the [getting-started guide](docs/PLAYING.md) for prerequisites,
 controls, saves, and troubleshooting.
 
+Join the [community Discord](https://discord.gg/aeTQjaQUr) to discuss the project
+and share feedback.
+
 ## Build and run
 
 Install Git, Python 3, CMake 3.20+, and a Windows x64 C++ toolchain. Visual Studio
