@@ -11,9 +11,14 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Disc = Join-Path $Root 'input/Disruptor (USA).cue'
+$BuildName = if ($env:DISRUPTOR_BUILD_DIRECTORY) {
+    $env:DISRUPTOR_BUILD_DIRECTORY
+} else {
+    'build'
+}
 $Candidates = @(
-    (Join-Path $Root 'build/DisruptorRecompiled.exe'),
-    (Join-Path $Root 'build/Release/DisruptorRecompiled.exe')
+    (Join-Path $Root "$BuildName/DisruptorRecompiled.exe"),
+    (Join-Path $Root "$BuildName/Release/DisruptorRecompiled.exe")
 )
 $Runtime = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 

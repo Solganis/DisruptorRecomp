@@ -30,7 +30,7 @@ int main() {
     fs::create_directories(root);
 
     try {
-        const fs::path path = root / fs::u8path(u8"settings-unicode-ü.toml");
+        const fs::path path = root / fs::path(u8"settings-unicode-ü.toml");
         UserSettings missing = PSXRecompV4::load_user_settings(path);
         require(!missing.parse_error && !missing.has_mouse_aim &&
                     !missing.has_vsync && !missing.has_master_volume &&
@@ -77,6 +77,8 @@ int main() {
         written.geometry_correction = true;
         written.has_perspective_textures = true;
         written.perspective_textures = true;
+        written.has_hud_scale = true;
+        written.hud_scale = 70;
         written.has_language = true;
         written.language = "en";
 
@@ -119,7 +121,8 @@ int main() {
                     loaded.has_geometry_correction &&
                     loaded.geometry_correction &&
                     loaded.has_perspective_textures &&
-                    loaded.perspective_textures,
+                    loaded.perspective_textures &&
+                    loaded.has_hud_scale && loaded.hud_scale == 70,
                 "Disruptor preferences did not round-trip");
         require(loaded.has_language && loaded.language == "en",
                 "merge-save dropped an unrelated known setting");

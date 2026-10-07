@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 extern "C" void gte_ws_set_far_threshold(int threshold);
 extern "C" void gte_ws_set_backdrop_repair_enabled(int enabled);
@@ -72,6 +73,7 @@ enum PreferenceDirty : uint32_t {
     PREF_FULLSCREEN        = 1u << 15,
     PREF_MASTER_VOLUME     = 1u << 16,
     PREF_AUDIO_MUTED       = 1u << 17,
+    PREF_HUD_SCALE         = 1u << 18,
 };
 
 struct PreferenceState {
@@ -84,6 +86,11 @@ struct PreferenceState {
 };
 
 PreferenceState g_preferences;
+
+std::string utf8(const fs::path &path) {
+    const std::u8string text = path.u8string();
+    return {text.begin(), text.end()};
+}
 
 bool env_override_present(const char *name) {
     return name && std::getenv(name) != nullptr;
@@ -252,6 +259,12 @@ void mark_audio_muted(bool value) {
     g_preferences.dirty |= PREF_AUDIO_MUTED;
 }
 
+void mark_hud_scale(int value) {
+    g_preferences.pending.has_hud_scale = true;
+    g_preferences.pending.hud_scale = value;
+    g_preferences.dirty |= PREF_HUD_SCALE;
+}
+
 void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     const auto &pending = g_preferences.pending;
     if (g_preferences.dirty & PREF_MOUSE_AIM) {
@@ -317,6 +330,10 @@ void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
         settings.has_audio_muted = true;
         settings.audio_muted = pending.audio_muted;
     }
+    if (g_preferences.dirty & PREF_HUD_SCALE) {
+        settings.has_hud_scale = true;
+        settings.hud_scale = pending.hud_scale;
+    }
 }
 
 bool flush_preferences() {
@@ -347,7 +364,7 @@ bool flush_preferences() {
     g_preferences.save_failed = false;
     g_preferences.status = "Settings saved.";
     std::fprintf(stdout, "disruptor: saved in-game settings to %s\n",
-                 g_preferences.path.u8string().c_str());
+                 utf8(g_preferences.path).c_str());
     return true;
 }
 
@@ -413,6 +430,7 @@ void apply_saved_preferences(const PSXRecompV4::UserSettings &settings) {
         (void)psx_host_audio_set_master_volume(settings.master_volume);
     if (settings.has_audio_muted)
         (void)psx_host_audio_set_muted(settings.audio_muted ? 1 : 0);
+    if (settings.has_hud_scale) gpu_ws_set_hud_scale(settings.hud_scale);
 }
 
 void apply_pending_preferences() {
@@ -461,6 +479,8 @@ void apply_pending_preferences() {
         (void)psx_host_audio_set_master_volume(pending.master_volume);
     if (g_preferences.dirty & PREF_AUDIO_MUTED)
         (void)psx_host_audio_set_muted(pending.audio_muted ? 1 : 0);
+    if (g_preferences.dirty & PREF_HUD_SCALE)
+        gpu_ws_set_hud_scale(pending.hud_scale);
 }
 
 void load_preferences_for_session() {
@@ -470,7 +490,8 @@ void load_preferences_for_session() {
         g_preferences.status = "Runtime settings path is unavailable.";
         return;
     }
-    g_preferences.path = fs::u8path(path);
+    const std::string_view text(path);
+    g_preferences.path = fs::path(std::u8string(text.begin(), text.end()));
     const PSXRecompV4::UserSettings settings =
         PSXRecompV4::load_user_settings(g_preferences.path);
     if (settings.parse_error) {
@@ -770,6 +791,18 @@ void draw_aspect_controls() {
         "4:3 disables widescreen. Fixed 16:9, 21:9 and 32:9 choices or "
         "live window matching (capped at 32:9) apply after the current "
         "frame and are saved.");
+
+    int hud_scale = gpu_ws_hud_scale();
+    ImGui::SetNextItemWidth(260.0f);
+    if (ImGui::SliderInt("HUD size", &hud_scale, 50, 100, "%d%%",
+                         ImGuiSliderFlags_AlwaysClamp)) {
+        gpu_ws_set_hud_scale(hud_scale);
+        mark_hud_scale(hud_scale);
+    }
+    draw_status_badge("LIVE", ImVec4(0.35f, 0.90f, 0.45f, 1.0f));
+    ImGui::TextDisabled(
+        "Widescreen only. Shrinks the health and ammunition displays toward "
+        "their screen edges. The weapon keeps its size.");
 }
 
 void draw_internal_resolution_controls() {
@@ -970,7 +1003,7 @@ void draw_system_tab() {
     ImGui::SeparatorText("Settings persistence");
     ImGui::TextWrapped("Path: %s",
         g_preferences.path.empty()
-            ? "unavailable" : g_preferences.path.u8string().c_str());
+            ? "unavailable" : utf8(g_preferences.path).c_str());
     if (g_preferences.save_failed)
         ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f),
                            "Not saved");

@@ -6467,7 +6467,9 @@ int main(int argc, char** argv) {
     {
         std::filesystem::path settings_path =
             exe_dir_from_argv(argv[0]) / "settings.toml";
-        g_host_user_settings_path_utf8 = settings_path.u8string();
+        const auto settings_utf8 = settings_path.u8string();
+        g_host_user_settings_path_utf8.assign(settings_utf8.begin(),
+                                              settings_utf8.end());
 #if defined(RECOMP_LAUNCHER)
         g_lnch_settings_path = settings_path;
 #endif

@@ -78,6 +78,19 @@ require("gpu_ws_tag_primitive" in gpu_h and
         "if (!ws_active() || !cpu || !cpu->read_word) return" in gpu and
         "gpu_ws_tag_primitive(cpu, packet, anchor_x)" in source,
         "audited packets must reuse the active classic-squash tag table")
+require("uint32_t word = i == 2 || i == 4 ? words[i] & 0xFFFFu : words[i];"
+        in tag_match_h,
+        "the fingerprint must leave out the CLUT and texture page the "
+        "0x8003D488 seam does not have yet")
+require('"disruptor_billboard_aspect_instruction_hook(cpu, 0x8003D488u, ")'
+        in audit and
+        'late = ["/* 0x8003D4A0: 0xA602000E */", '
+        '"/* 0x8003D4A8: 0xA6020016 */"]' in audit and
+        "return seam < shard_text.index(late[0]) < shard_text.index(late[1])"
+        in audit and
+        "if not billboard_seam_precedes_texture_stores(shard_text):" in audit,
+        "the code generation audit must pin the two stores that follow the "
+        "0x8003D488 seam")
 for token in ("content_validated", "psx_ws_tag_match_result",
               "tag->key = 0"):
     require(token in gpu,

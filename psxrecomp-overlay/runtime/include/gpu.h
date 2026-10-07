@@ -265,6 +265,9 @@ void gpu_ws_tag_primitive(CPUState *cpu, uint32_t primitive_addr,
 void gpu_ws_tag_screen_tile(CPUState *cpu, uint32_t primitive_addr);
 /* Widened counterpart of a frame X for such a tile span. */
 int32_t gpu_ws_widen_x(int32_t x, int round_up);
+/* Size of the widescreen HUD in percent, 50 to 100. 100 is the authored size. */
+void gpu_ws_set_hud_scale(int percent);
+int gpu_ws_hud_scale(void);
 /* [widescreen] full_2d: opt a pure-2D sprite game into the widescreen present
  * path (treat every in-game frame as gameplay, since it never tags 3D prims). */
 void gpu_ws_set_full_2d(int on);
