@@ -260,6 +260,11 @@ void gpu_ws_configure(int aspect_num, int aspect_den,
  * Calls are ignored outside an active classic-wide gameplay presentation. */
 void gpu_ws_tag_primitive(CPUState *cpu, uint32_t primitive_addr,
                           int32_t anchor_x);
+/* Mark a completed, audited SPRT packet as a backdrop tile laid out edge to
+ * edge in widened coordinates: classic squash maps it about the display centre. */
+void gpu_ws_tag_screen_tile(CPUState *cpu, uint32_t primitive_addr);
+/* Widened counterpart of a frame X for such a tile span. */
+int32_t gpu_ws_widen_x(int32_t x, int round_up);
 /* [widescreen] full_2d: opt a pure-2D sprite game into the widescreen present
  * path (treat every in-game frame as gameplay, since it never tags 3D prims). */
 void gpu_ws_set_full_2d(int on);

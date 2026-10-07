@@ -1618,6 +1618,26 @@ static int disruptor_billboard_aspect_site(uint32_t pc, uint32_t insn) {
 }
 #endif
 
+#ifdef PSX_HAS_DISRUPTOR_BACKDROP_TILES
+extern void disruptor_backdrop_tiles_instruction_hook(
+    CPUState *cpu, uint32_t address, uint32_t instruction, int phase);
+
+static int disruptor_backdrop_tile_site(uint32_t pc, uint32_t insn) {
+    switch (pc) {
+    case 0x8003B328u: case 0x8003B638u:
+        return insn == 0x8FB80040u;
+    case 0x8003B338u:
+        return insn == 0x00621821u;
+    case 0x8003B348u:
+        return insn == 0x8FB80028u;
+    case 0x8003B5A8u:
+        return insn == 0x8F8205B8u;
+    default:
+        return 0;
+    }
+}
+#endif
+
 static int exec_one_fetched(CPUState *cpu, uint32_t pc, uint32_t insn,
                             uint32_t *next_pc_out) {
     /* A load's writeback becomes visible to the instruction AFTER its delay
@@ -1688,6 +1708,12 @@ static int exec_one_fetched(CPUState *cpu, uint32_t pc, uint32_t insn,
 #ifdef PSX_HAS_DISRUPTOR_BILLBOARD_ASPECT
     if (disruptor_billboard_aspect_site(pc, insn)) {
         disruptor_billboard_aspect_instruction_hook(cpu, pc, insn, 1);
+    }
+#endif
+
+#ifdef PSX_HAS_DISRUPTOR_BACKDROP_TILES
+    if (disruptor_backdrop_tile_site(pc, insn)) {
+        disruptor_backdrop_tiles_instruction_hook(cpu, pc, insn, 1);
     }
 #endif
 
