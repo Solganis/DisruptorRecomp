@@ -3,6 +3,7 @@
 
 import re
 import struct
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +65,10 @@ require(
     and "disruptor_backdrop_tiles_contract" in cmake
     and "add_test(NAME disruptor_backdrop_tiles\n" in cmake,
     "backdrop tile source, its unit test and its contract test must remain registered",
+)
+require(
+    'tests/test_backdrop_tiles_contract.py"\n            --require-artifacts)' in cmake,
+    "the build gate must run this contract with its inputs required",
 )
 require(
     "PSX_HAS_DISRUPTOR_BACKDROP_TILES=1" in cmake,
@@ -153,5 +158,9 @@ if generated:
 checked = ", ".join(
     f"{name} {'checked' if present else 'absent'}"
     for name, present in (("retail image", image_path.exists()), ("generated code", bool(generated)))
+)
+require(
+    "--require-artifacts" not in sys.argv[1:] or (image_path.exists() and bool(generated)),
+    f"the build gate must check the retail image and the generated code: {checked}",
 )
 print(f"Disruptor backdrop tile source/codegen contract: PASS ({checked})")

@@ -161,6 +161,67 @@ require(
     "the divisor must charge whole cycles and carry the remainder",
 )
 
+present_rate = read("src/disruptor_present_rate.h")
+present_control = read("src/disruptor_present_rate.cpp")
+renderer = read("psxrecomp-overlay/runtime/src/gpu_gl_renderer.c")
+host = read("psxrecomp-overlay/runtime/src/main.cpp")
+require(
+    "add_test(NAME disruptor_present_rate\n" in cmake
+    and "constexpr int kDisruptorPresentRateLowest = 30;" in present_rate
+    and "constexpr int kDisruptorPresentRateLeastTop = 120;" in present_rate,
+    "the in-between frame rate control must run from 30 FPS to at least 120 and keep its unit test",
+)
+require(
+    "    if(DISRUPTOR_FRAME_INTERPOLATION)\n"
+    "        list(APPEND DISRUPTOR_EXTRA_SOURCES\n"
+    '            "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_present_rate.cpp")\n' in cmake
+    and "#ifndef PSX_DISABLE_FRAME_INTERPOLATION\n"
+    "    int present_rate = 0;\n"
+    "    if (disruptor_present_rate_control(&present_rate)) mark_present_rate(present_rate);\n"
+    "#endif\n" in menu
+    and "#ifndef PSX_DISABLE_FRAME_INTERPOLATION\n"
+    "    if (g_preferences.dirty & PREF_PRESENT_RATE)\n"
+    "        (void)disruptor_present_rate_apply(pending.frame_interpolation_fps);\n"
+    "#endif\n" in menu,
+    "a build without the frame interpolator must have no rate control, in the menu or in the sources",
+)
+require(
+    'if (ImGui::SliderInt("In-between frame rate", &shown, kDisruptorPresentRateLowest, top, "%d FPS",\n'
+    "                         ImGuiSliderFlags_AlwaysClamp) &&\n"
+    "        disruptor_present_rate_apply(shown)) {\n"
+    "        if (accepted) *accepted = shown;\n"
+    "        changed = 1;\n" in present_control
+    and "const int top = disruptor_present_rate_top(display_hz);" in present_control
+    and "int shown = disruptor_present_rate_shown(target, top);" in present_control,
+    "the control must apply the rate at once and report only a rate the host accepted",
+)
+require(
+    "    return enabled && psx_host_video_set_interpolation(1, frames_per_second, blend) != 0;\n" in present_control,
+    "the rate control must not switch in-between frames on by itself, and must keep their blend mode",
+)
+require(
+    "    if (g_preferences.dirty & PREF_PRESENT_RATE) {\n"
+    "        settings.has_frame_interpolation_fps = true;\n"
+    "        settings.frame_interpolation_fps = pending.frame_interpolation_fps;\n" in menu,
+    "a changed in-between frame rate must reach settings.toml",
+)
+require(
+    "(target_fps < 30 || target_fps > 1000))" in host
+    and "if (fps == 0 || fps >= 30) g_frame_interpolation_fps = fps;" in host
+    and "if (us.has_frame_interpolation_fps)\n            g_frame_interpolation_fps = us.frame_interpolation_fps;" in host,
+    "the host must take a rate from 30 FPS, from the menu, the environment and the saved settings",
+)
+require(
+    ": (target_hz >= 30.0 ? target_hz : host_hz);" in renderer
+    and "(effective_hz < 0.0 || effective_hz >= 30.0)) ? 1 : 0;" in renderer
+    and "            if (hz < 30.0) hz = 60.0;\n" in renderer,
+    "the presenter must run at any rate from 30 FPS",
+)
+require(
+    "if (s.frame_interpolation_fps == 0 || s.frame_interpolation_fps >= 30)" in settings_loader,
+    "settings.toml must keep an in-between frame rate from 30 FPS",
+)
+
 image_path = ROOT / "input" / "SLUS_002.24.code"
 if image_path.exists():
     image = image_path.read_bytes()

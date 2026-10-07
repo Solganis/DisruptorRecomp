@@ -25,6 +25,9 @@
 #include <array>
 #include <cstdint>
 
+extern "C" void disruptor_sprite_depth_packet(
+    CPUState *cpu, uint32_t packet_site, uint32_t packet);
+
 namespace {
 
 struct BillboardPacketSite {
@@ -128,8 +131,9 @@ extern "C" void disruptor_billboard_aspect_instruction_hook(
         return;
     }
     const BillboardPacketSite *site = billboard_packet_site(pc, instruction);
-    if (!site ||
-        (g_billboard_packet_site_mask & billboard_packet_site_bit(site)) == 0) {
+    if (!site) return;
+    disruptor_sprite_depth_packet(cpu, pc, cpu->gpr[site->packet_gpr]);
+    if ((g_billboard_packet_site_mask & billboard_packet_site_bit(site)) == 0) {
         return;
     }
     tag_completed_billboard(cpu, site->packet_gpr);

@@ -12,6 +12,7 @@
 #include "disruptor_far_rendering.h"
 #include "disruptor_frame_rate.h"
 #include "disruptor_mouse_aim.h"
+#include "disruptor_present_rate.h"
 #include "config_loader.h"
 #include "gpu.h"
 #include "host_ui.h"
@@ -76,6 +77,8 @@ enum PreferenceDirty : uint32_t {
     PREF_AUDIO_MUTED       = 1u << 17,
     PREF_HUD_SCALE         = 1u << 18,
     PREF_FRAME_UNLOCK      = 1u << 19,
+    PREF_SHADOW_SHAPE      = 1u << 20,
+    PREF_PRESENT_RATE      = 1u << 21,
 };
 
 struct PreferenceState {
@@ -273,6 +276,18 @@ void mark_frame_unlock(bool value) {
     g_preferences.dirty |= PREF_FRAME_UNLOCK;
 }
 
+void mark_shadow_shape(bool improved) {
+    g_preferences.pending.has_improved_shadows = true;
+    g_preferences.pending.improved_shadows = improved;
+    g_preferences.dirty |= PREF_SHADOW_SHAPE;
+}
+
+void mark_present_rate(int value) {
+    g_preferences.pending.has_frame_interpolation_fps = true;
+    g_preferences.pending.frame_interpolation_fps = value;
+    g_preferences.dirty |= PREF_PRESENT_RATE;
+}
+
 void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     const auto &pending = g_preferences.pending;
     if (g_preferences.dirty & PREF_MOUSE_AIM) {
@@ -345,6 +360,14 @@ void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     if (g_preferences.dirty & PREF_FRAME_UNLOCK) {
         settings.has_frame_unlock = true;
         settings.frame_unlock = pending.frame_unlock;
+    }
+    if (g_preferences.dirty & PREF_SHADOW_SHAPE) {
+        settings.has_improved_shadows = true;
+        settings.improved_shadows = pending.improved_shadows;
+    }
+    if (g_preferences.dirty & PREF_PRESENT_RATE) {
+        settings.has_frame_interpolation_fps = true;
+        settings.frame_interpolation_fps = pending.frame_interpolation_fps;
     }
 }
 
@@ -446,6 +469,8 @@ void apply_saved_preferences(const PSXRecompV4::UserSettings &settings) {
     if (settings.has_frame_unlock &&
         !env_override_present("PSX_DISRUPTOR_FRAME_UNLOCK"))
         disruptor_frame_rate_set_unlocked(settings.frame_unlock ? 1 : 0);
+    if (settings.has_improved_shadows && !env_override_present("PSX_DISRUPTOR_IMPROVED_SHADOWS"))
+        gpu_set_shadow_shape(settings.improved_shadows ? 1 : 0);
 }
 
 void apply_pending_preferences() {
@@ -498,6 +523,12 @@ void apply_pending_preferences() {
         gpu_ws_set_hud_scale(pending.hud_scale);
     if (g_preferences.dirty & PREF_FRAME_UNLOCK)
         disruptor_frame_rate_set_unlocked(pending.frame_unlock ? 1 : 0);
+    if (g_preferences.dirty & PREF_SHADOW_SHAPE)
+        gpu_set_shadow_shape(pending.improved_shadows ? 1 : 0);
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    if (g_preferences.dirty & PREF_PRESENT_RATE)
+        (void)disruptor_present_rate_apply(pending.frame_interpolation_fps);
+#endif
 }
 
 void load_preferences_for_session() {
@@ -809,6 +840,19 @@ void draw_aspect_controls() {
         "live window matching (capped at 32:9) apply after the current "
         "frame and are saved.");
 
+    if (gpu_sprite_placement_available()) {
+        int shadow_shape = gpu_shadow_shape();
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::Combo("Shadows", &shadow_shape, "Vanilla\0Improved\0")) {
+            gpu_set_shadow_shape(shadow_shape);
+            mark_shadow_shape(shadow_shape != 0);
+        }
+        draw_status_badge("LIVE", ImVec4(0.35f, 0.90f, 0.45f, 1.0f));
+        ImGui::TextDisabled(
+            "Improved lays a shadow flat on the floor: as wide as the game makes it and as tall "
+            "as the floor's perspective gives. Works with geometry correction on.");
+    }
+
     int hud_scale = gpu_ws_hud_scale();
     ImGui::SetNextItemWidth(260.0f);
     if (ImGui::SliderInt("HUD size", &hud_scale, 50, 100, "%d%%",
@@ -896,6 +940,11 @@ void draw_enhancements_tab() {
             window.peak_work_permille / 1000.0,
             window.late_frames, window.frames);
     }
+
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    int present_rate = 0;
+    if (disruptor_present_rate_control(&present_rate)) mark_present_rate(present_rate);
+#endif
 }
 
 const char *cheat_result_message(int result, const char *success) {

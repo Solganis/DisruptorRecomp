@@ -50,6 +50,13 @@ chmod +x build.sh run.sh tools/regen.sh
 
 `--mouse-aim` and `--vertical-look` are also available.
 
+## In-between frames
+
+The presentation-only frame interpolator is experimental and compiled out by
+default. Configure with `-DDISRUPTOR_FRAME_INTERPOLATION=ON` to build it, and
+start the game with `PSX_FRAME_INTERPOLATION=1` to use it. **Settings →
+Enhancements** then also offers the in-between frame rate and the shadow shape.
+
 ## Generated game code
 
 The build scripts generate the translated resident game code locally from your

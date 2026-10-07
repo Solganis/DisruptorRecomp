@@ -16,12 +16,14 @@ disc revision; the redistributable OpenBIOS backend is used for booting.
 - Optional widescreen: 16:9, 21:9, 32:9, or Match window. Menus and movies stay
   at 4:3, and the HUD retains its proportions.
 - Optional geometry and perspective-texture correction.
+- Optional 60 FPS gameplay (experimental).
 - Keyboard/controller input and optional modern WASD/mouse controls.
 - Experimental vertical mouse look and weapon aim.
 - In-game settings for controls, display, fullscreen, VSync, volume, and mute.
 - Memory-card saves and twelve save-state slots.
 
-Frame interpolation is currently disabled.
+In-between frames are experimental and compiled out by default; see
+[docs/BUILD.md](docs/BUILD.md).
 
 ## Play the Windows alpha
 

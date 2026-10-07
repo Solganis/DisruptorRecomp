@@ -19,6 +19,14 @@ typedef struct GpuTemporalTriangle {
     float x[3], y[3], q[3];
     int world;
     float depth[3];
+    /* The GTE input vertex of each corner when `modelled`: the same point of
+     * the level gives the same value up to one shift shared by a whole frame. */
+    int16_t model[3][3];
+    int modelled;
+    int sprite; /* a CPU-projected billboard: one depth, no model */
+    /* Nonzero: x and y of that corner are numerators over this weight, the
+     * form a projection produces. Zero means a plain screen position. */
+    float w[3];
 } GpuTemporalTriangle;
 
 #define GPU_TEMPORAL_MAX_TRIANGLES 8192
@@ -239,12 +247,36 @@ static inline void gpu_temporal_lerp(const GpuTemporalTriangle *prev,
     if (!out) return;
     if (!curr) { if (prev) *out = *prev; return; }
     if (!prev || !gpu_temporal_finite(alpha) || alpha >= 1.0f) {
-        *out = *curr;
-        return;
+        /* A weighted end still has to be divided by its weight. */
+        if (curr->w[0] == 0.0f && curr->w[1] == 0.0f && curr->w[2] == 0.0f) { *out = *curr; return; }
+        if (!prev) prev = curr;
+        alpha = 1.0f;
     }
-    if (alpha <= 0.0f) { *out = *prev; return; }
+    if (alpha <= 0.0f) {
+        /* A weighted corner still has to be divided by its weight. */
+        if (prev->w[0] == 0.0f && prev->w[1] == 0.0f && prev->w[2] == 0.0f) { *out = *prev; return; }
+        alpha = 0.0f;
+    }
     result = *curr;
     for (int vertex = 0; vertex < 3; ++vertex) {
+        if (prev->w[vertex] != 0.0f || curr->w[vertex] != 0.0f) {
+            /* A weighted corner moves along the line its projection moved
+             * it: straight in space, so collinear corners stay collinear
+             * for any turn. The result keeps its weight; at or below zero
+             * the corner is not in front of the viewer yet. */
+            const double before = prev->w[vertex] != 0.0f ? prev->w[vertex] : 1.0;
+            const double after = curr->w[vertex] != 0.0f ? curr->w[vertex] : 1.0;
+            const double weight = before + (after - before) * alpha;
+            const double scale = weight > 1e-6 ? 1.0 / weight : 0.0;
+            result.x[vertex] = (float)(((double)prev->x[vertex] +
+                ((double)curr->x[vertex] - prev->x[vertex]) * alpha) * scale);
+            result.y[vertex] = (float)(((double)prev->y[vertex] +
+                ((double)curr->y[vertex] - prev->y[vertex]) * alpha) * scale);
+            result.w[vertex] = (float)weight;
+            result.q[vertex] = (float)((double)prev->q[vertex] +
+                ((double)curr->q[vertex] - prev->q[vertex]) * alpha);
+            continue;
+        }
         result.x[vertex] = (float)((double)prev->x[vertex] +
             ((double)curr->x[vertex] - prev->x[vertex]) * alpha);
         result.y[vertex] = (float)((double)prev->y[vertex] +

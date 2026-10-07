@@ -10,10 +10,10 @@ and public-release validation are incomplete.
 | Rendering | OpenGL supports 1x–8x resolution, widescreen, geometry correction, and perspective textures. Minor edge gaps and localized texture wobble can remain. |
 | Controls | Modern keyboard/mouse controls are available. Vertical look and weapon aim remain experimental. |
 | Settings | Controls, Enhancements, Cheats, and System tabs; supported preferences persist between runs. |
-| Interpolation and diagnostics | Frame interpolation is disabled. The Diagnostics tab and experimental debug controls are removed. |
+| Interpolation and diagnostics | In-between frames are experimental and compiled out by default. The Diagnostics tab and experimental debug controls are removed. |
 | Ultrawide corruption | Fixed primitive-buffer overflow. The user's 8x / 32:9 training retest stayed correct through 8,934 frames and closed normally. |
 | Save states | Expanded rendering buffers survive saving and loading in a fresh process; the training-level restart check passed. |
-| Automated checks | Windows Release build and all 27 root CTests passed. |
+| Automated checks | Windows Release build and all 37 root CTests passed. |
 | Player package | Windows x64 alpha includes the launcher, OpenBIOS, and setup guide. A clean extracted package reached the first mission using only a BIN/CUE; the production launcher also loaded a gameplay save state. |
 
 ## Remaining limits

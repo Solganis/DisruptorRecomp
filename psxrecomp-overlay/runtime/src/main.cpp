@@ -1,4 +1,4 @@
-﻿/* main.cpp — Phase 3 runtime entry point.
+/* main.cpp — Phase 3 runtime entry point.
  *
  * Loads BIOS ROM, initializes CPU state + SDL display, calls into
  * the recompiled reset vector. BIOS drives execution; SDL presents
@@ -245,6 +245,14 @@ static int configure_disruptor_precision_store_routes(
         std::fprintf(stderr,
             "psxrecomp: failed to register Disruptor scratchpad SXY2 "
             "store route 0x80047A0C\n");
+        return 0;
+    }
+    /* 0x80047980..0x800479E0 pin x to -256..576 and y to -256..496 before that store. */
+    if (!gte_precision_scratch_store_pc_route_clamp(
+            0x80047A0Cu, 0xACAA0004u, -0x100, 0x240, -0x100, 0x1F0)) {
+        std::fprintf(stderr,
+            "psxrecomp: failed to register the guard band of Disruptor's "
+            "scratchpad SXY2 store route 0x80047A0C\n");
         return 0;
     }
     for (const PrecisionCopyRoute& route : copy_routes) {
@@ -1560,7 +1568,7 @@ extern "C" int psx_host_video_set_interpolation(int enabled,
 #else
     enabled = enabled ? 1 : 0;
     if (target_fps != -1 && target_fps != 0 &&
-        (target_fps < 60 || target_fps > 1000))
+        (target_fps < 30 || target_fps > 1000))
         return 0;
     if (blend_mode != PSX_MOD_FRAME_INTERPOLATION_LINEAR &&
         blend_mode != PSX_MOD_FRAME_INTERPOLATION_MOTION_ADAPTIVE &&
@@ -6758,7 +6766,7 @@ int main(int argc, char** argv) {
         g_frame_interpolation = atoi(e) ? 1 : 0;
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_FPS")) {
         int fps = atoi(e);
-        if (fps == 0 || fps >= 60) g_frame_interpolation_fps = fps;
+        if (fps == 0 || fps >= 30) g_frame_interpolation_fps = fps;
     }
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_BLEND")) {
         if (strcmp(e, "geometry") == 0 || strcmp(e, "2") == 0) {

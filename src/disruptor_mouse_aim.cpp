@@ -89,6 +89,7 @@ struct MouseAimState {
     double horizontal_sensitivity = kDefaultHorizontalSensitivity;
     double vertical_sensitivity = kDefaultVerticalSensitivity;
     double fractional_yaw = 0.0;
+    double sweep_counts = 0.0;
     double vertical_pitch = 0.0;
     uint64_t frame = 0;
     uint64_t motion_samples = 0;
@@ -529,6 +530,10 @@ void log_geometry_diagnostics_scope(
 void mouse_aim_frame() {
     if (!g_mouse.enabled || !sdl_window) return;
     ++g_mouse.frame;
+#ifndef PSX_NO_DEBUG_TOOLS
+    if (g_mouse.sweep_counts != 0.0)
+        apply_mouse_x((g_mouse.frame / 40u) % 2u ? -g_mouse.sweep_counts : g_mouse.sweep_counts);
+#endif
     load_configuration();
     open_log();
 
@@ -659,6 +664,10 @@ struct MouseAimRegistration {
             env_enabled("PSX_DISRUPTOR_MODERN_CONTROLS");
         g_mouse.high_precision_camera =
             env_enabled("PSX_DISRUPTOR_HIGH_PRECISION_CAMERA");
+#ifndef PSX_NO_DEBUG_TOOLS
+        if (const char *sweep = std::getenv("PSX_DISRUPTOR_MOUSE_AIM_SWEEP"))
+            g_mouse.sweep_counts = std::atof(sweep);
+#endif
         g_mouse.enabled = g_mouse.mouse_aim_enabled ||
                           g_mouse.vertical_look_enabled ||
                           g_mouse.modern_controls_enabled ||

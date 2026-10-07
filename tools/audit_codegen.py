@@ -197,6 +197,14 @@ BACKDROP_TILE_SITES = {
     0x8003B638: 0x8FB80040,
 }
 
+SPRITE_DEPTH_SITES = {
+    0x8003B98C: 0xAFA20010,
+    0x8003BDA0: 0xAFA20010,
+    0x8003C4B0: 0xAFA20010,
+    0x8003D078: 0xAFA20010,
+    0x8003D1B4: 0xA4379EA0,
+}
+
 BILLBOARD_ASPECT_SITES = {
     0x8003BB88: 0xA6030016,
     0x8003BFB0: 0xA6030016,
@@ -534,6 +542,47 @@ def main() -> int:
             + ", found "
             + str(generated_backdrop_tile_sites)
         )
+
+    backdrop_tile_matches = re.findall(
+        r"disruptor_backdrop_tiles_instruction_hook\(cpu, "
+        r"0x([0-9A-F]{8})u, 0x([0-9A-F]{8})u, 1\)",
+        shard_text,
+    )
+    generated_backdrop_tile_sites = {
+        int(address, 16): int(word, 16)
+        for address, word in backdrop_tile_matches
+    }
+    if (generated_backdrop_tile_sites != BACKDROP_TILE_SITES or
+            len(backdrop_tile_matches) != len(BACKDROP_TILE_SITES)):
+        failures.append(
+            "reviewed backdrop-tile hooks differ: expected "
+            + str(BACKDROP_TILE_SITES)
+            + ", found "
+            + str(generated_backdrop_tile_sites)
+        )
+
+    sprite_depth_matches = re.findall(
+        r"disruptor_sprite_depth_instruction_hook\(cpu, "
+        r"0x([0-9A-F]{8})u, 0x([0-9A-F]{8})u, 1\)",
+        shard_text,
+    )
+    generated_sprite_depth_sites = {
+        int(address, 16): int(word, 16)
+        for address, word in sprite_depth_matches
+    }
+    if (generated_sprite_depth_sites != SPRITE_DEPTH_SITES or
+            len(sprite_depth_matches) != len(SPRITE_DEPTH_SITES)):
+        failures.append(
+            "reviewed sprite-depth hooks differ: expected "
+            + str(SPRITE_DEPTH_SITES)
+            + ", found "
+            + str(generated_sprite_depth_sites)
+        )
+
+    for pin in ("cpu->gpr[11] = -256;  /* 0x8004798C: 0x200BFF00 */", "cpu->gpr[11] = 576;  /* 0x800479A8: 0x200B0240 */",
+                "cpu->gpr[12] = -256;  /* 0x800479C4: 0x200CFF00 */", "cpu->gpr[12] = 496;  /* 0x800479E0: 0x200C01F0 */"):
+        if shard_text.count(pin) != 1:
+            failures.append("the guard band before the 0x80047A0C scratch store changed: " + pin)
 
     precision_mfc2_matches = re.findall(
         r"gte_precision_mfc2_pc_read\(0x([0-9A-F]{8})u, "

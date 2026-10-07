@@ -28,6 +28,7 @@
 #include "gpu_ws_hud_scale.h"
 #include "gpu_ws_screen_tile.h"
 #include "gpu_ws_tag_match.h"
+#include "gpu_temporal_sprite.h"
 #include "ws_ui_group.h"
 #include <math.h>
 #include <stdint.h>
@@ -136,6 +137,9 @@ typedef struct {
     int32_t anchor_x;
     uint32_t signature;
     uint8_t content_validated;
+    uint8_t placed, sized, shadow, whole;
+    int32_t centre_x, offset_y; /* 16.16: a sprite's unrounded centre, and how far above or below its row */
+    int32_t row, width, height; /* 16.16: the unrounded row it is centred on and its unrounded sides */
 } WsTag;
 static WsTag    ws_tags[WS_TAG_BUCKETS];
 static uint32_t ws_last_tag_stamp = (uint32_t)-1000; /* frame of newest tag */
@@ -1497,6 +1501,14 @@ int psx_ws_project_x(int x) {
     return (int32_t)(cx + n / ws_xden);
 }
 
+/* psx_ws_project_x for a point with a 16.16 fraction, without its rounding. */
+int32_t psx_ws_project_x16(int x, int32_t fraction16) {
+    const int64_t exact = (int64_t)x * 65536 + fraction16;
+    if (ws_mode != 1 || !ws_configured()) return (int32_t)exact;
+    const int64_t cx = ((int64_t)ws_disp_w() / 2) * 65536;
+    return (int32_t)(cx + (exact - cx) * ws_xnum / ws_xden);
+}
+
 /* Backdrop PRELOAD predicate + value substitution ([widescreen.cull]
  * auto_backdrop). The recompiler/interp detect each scrolling-backdrop
  * column-window generator (see ws_backdrop_detect.h) and route its window START
@@ -1743,6 +1755,102 @@ void gpu_ws_tag_primitive(CPUState *cpu, uint32_t primitive_addr,
     ws_tag_primitive(primitive_addr, anchor_x,
                      psx_ws_ft4_signature_words(words), 1);
 }
+
+#define TEMPORAL_SPRITE_BUCKETS 4096
+static WsTag temporal_sprites[TEMPORAL_SPRITE_BUCKETS];
+
+static WsTag *temporal_sprite_slot(uint32_t key, int claim) {
+    const uint32_t now = (uint32_t)s_frame_count;
+    const uint32_t first = (key >> 2) & (TEMPORAL_SPRITE_BUCKETS - 1);
+    WsTag *stale = NULL;
+    for (int i = 0; i < WS_TAG_PROBES; i++) {
+        WsTag *t = &temporal_sprites[(first + (uint32_t)i) & (TEMPORAL_SPRITE_BUCKETS - 1)];
+        if (t->key == key) return t;
+        if (!stale && (t->key == 0 || now - t->stamp > 2)) stale = t;
+    }
+    return claim ? stale : NULL;
+}
+
+void gpu_temporal_note_sprite(CPUState *cpu, uint32_t primitive_addr,
+                              int32_t depth) {
+    if (!cpu || !cpu->read_word || depth <= 0) return;
+    const uint32_t key = psx_mod_gpu_dma_resolve_address(primitive_addr);
+    WsTag *t = key ? temporal_sprite_slot(key, 1) : NULL;
+    uint32_t words[9];
+    if (!t) return;
+    for (int i = 0; i < 9; i++)
+        words[i] = cpu->read_word(primitive_addr + 4u + (uint32_t)i * 4u);
+    t->key = key;
+    t->stamp = (uint32_t)s_frame_count;
+    t->anchor_x = depth;
+    t->signature = psx_ws_ft4_signature_words(words);
+    t->content_validated = 1;
+    t->placed = t->sized = t->shadow = t->whole = 0;
+}
+
+void gpu_temporal_place_sprite(uint32_t primitive_addr, int32_t centre_x16, int32_t offset_y16) {
+    const uint32_t key = psx_mod_gpu_dma_resolve_address(primitive_addr);
+    WsTag *t = key ? temporal_sprite_slot(key, 0) : NULL;
+    if (!t || t->stamp != (uint32_t)s_frame_count) return;
+    t->placed = 1;
+    t->centre_x = centre_x16;
+    t->offset_y = offset_y16;
+}
+
+void gpu_temporal_size_sprite(uint32_t primitive_addr, int32_t row16, int32_t width16, int32_t height16,
+                              int shadow, int whole) {
+    const uint32_t key = psx_mod_gpu_dma_resolve_address(primitive_addr);
+    WsTag *t = key ? temporal_sprite_slot(key, 0) : NULL;
+    if (!t || t->stamp != (uint32_t)s_frame_count || !t->placed || width16 <= 0 || height16 <= 0) return;
+    t->sized = 1;
+    t->shadow = shadow != 0;
+    t->whole = whole != 0;
+    t->row = row16;
+    t->width = width16;
+    t->height = height16;
+}
+
+static int s_shadow_shape = -1; /* not chosen yet: PSX_DISRUPTOR_IMPROVED_SHADOWS=1 of the launcher decides */
+void gpu_set_shadow_shape(int improved) { s_shadow_shape = improved != 0; }
+int gpu_shadow_shape(void) {
+    if (s_shadow_shape < 0) {
+        const char *asked = getenv("PSX_DISRUPTOR_IMPROVED_SHADOWS");
+        s_shadow_shape = asked && asked[0] == '1';
+    }
+    return s_shadow_shape;
+}
+int gpu_sprite_placement_available(void) {
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+static const WsTag *temporal_sprite_tag(void) {
+    if (gp0_cmd_source_addr == 0xFFFFFFFFu) return NULL;
+    const uint32_t key = psx_mod_gpu_dma_resolve_address(gp0_cmd_source_addr - 4u);
+    const WsTag *t = key ? temporal_sprite_slot(key, 0) : NULL;
+    if (!t || psx_ws_tag_match_result((uint32_t)s_frame_count, t->stamp, 1,
+                                      t->signature, gp0_cmd_buf) != PSX_WS_TAG_MATCH)
+        return NULL;
+    return t;
+}
+
+/* How far the presentation moves the left, top, right and bottom side of a sprite's rectangle (x, y, w, h on screen,
+ * raw_w and raw_h as the packet has them). Returns the sprite's camera depth, 0 without one. */
+static float temporal_sprite_sides(int x, int y, int w, int h, int raw_w, int raw_h, int squashed, float sides[4]) {
+    const WsTag *t = temporal_sprite_tag();
+    sides[0] = sides[1] = sides[2] = sides[3] = 0.0f;
+    if (!t) return 0.0f;
+    const GpuTemporalSprite sprite = gpu_temporal_sprite_from_fixed(
+        t->placed, t->sized, t->shadow, t->whole, t->centre_x, t->offset_y, t->row, t->width, t->height);
+    gpu_temporal_sprite_sides(&sprite, (float)x, (float)y, w, h, raw_w, raw_h,
+                              squashed ? (float)ws_xnum / (float)ws_xden : 1.0f, gpu_shadow_shape(), sides);
+    return (float)t->anchor_x;
+}
+#endif
 
 /* Backdrop tiles tile the frame exactly, so squashing each one around a HUD
  * pivot pulls them apart and exposes the clear colour between them. */
@@ -3349,6 +3457,13 @@ static void geometry_diag_note_accepted(
  * quad use their original indices; shader q remains a separate attribute. */
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
 static uint16_t s_precise_vertex_depth[4];
+static uint64_t s_precise_vertex_identity[4];
+static int s_precise_vertex_partial;
+#endif
+#ifdef PSX_HAS_DISRUPTOR_GROWN_QUAD
+extern int disruptor_grown_quad_sources(
+    uint32_t command_address, const uint32_t *packet,
+    uint32_t source_address[4], uint32_t source_word[4]);
 #endif
 static int resolve_precise_vertices(const int *indices, int count,
                                     int triangle_count,
@@ -3356,6 +3471,8 @@ static int resolve_precise_vertices(const int *indices, int count,
                                     int32_t *fx, int32_t *fy) {
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
     memset(s_precise_vertex_depth, 0, sizeof(s_precise_vertex_depth));
+    memset(s_precise_vertex_identity, 0, sizeof(s_precise_vertex_identity));
+    s_precise_vertex_partial = 0;
 #endif
     if (!gte_geometry_correction_enabled())
         return 0;
@@ -3387,13 +3504,21 @@ static int resolve_precise_vertices(const int *indices, int count,
     int32_t precise_x[4], precise_y[4], raw_x[4], raw_y[4];
     uint16_t z[4];
     int resolved = 0;
+    uint32_t grown_addr[4] = {0}, grown_word[4] = {0};
+#ifdef PSX_HAS_DISRUPTOR_GROWN_QUAD
+    /* Disruptor's second, grown copy of a world quad stands on the first packet's corners. */
+    const int grown = count == 4 && disruptor_grown_quad_sources(
+        gp0_cmd_source_addr, gp0_cmd_buf, grown_addr, grown_word);
+#else
+    const int grown = 0;
+#endif
 
     for (int i = 0; i < count; ++i) {
-        const uint32_t word = gp0_cmd_buf[indices[i]];
-        uint32_t addr;
+        const uint32_t word = grown ? grown_word[i] : gp0_cmd_buf[indices[i]];
+        uint32_t addr = grown_addr[i];
         GpuGeometryRejectReason reject;
         int accepted = 0;
-        if (!gp0_source_word_address(indices[i], &addr)) {
+        if (!grown && !gp0_source_word_address(indices[i], &addr)) {
             reject = GPU_GEOMETRY_REJECT_SOURCE_ADDRESS_OVERFLOW;
         } else {
             const GtePrecisionLookupResult result =
@@ -3406,12 +3531,17 @@ static int resolve_precise_vertices(const int *indices, int count,
                 /* This test happens on the retained raw projection. Draw
                  * offsets and widescreen transforms in vx/vy must not hide a
                  * saturated or otherwise non-subpixel discrepancy. */
-                if (fixed16_integer_floor(precise_x[i]) != raw_x[i] ||
-                    fixed16_integer_floor(precise_y[i]) != raw_y[i]) {
+                /* A corner the game pinned to its guard band is drawn where it projects. */
+                if ((fixed16_integer_floor(precise_x[i]) != raw_x[i] ||
+                     fixed16_integer_floor(precise_y[i]) != raw_y[i]) &&
+                    !gte_precision_word_clamped(addr, word)) {
                     reject = GPU_GEOMETRY_REJECT_INTEGER_MISMATCH;
                 } else {
                     accepted = 1;
                     ++resolved;
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+                    s_precise_vertex_depth[i] = z[i];
+#endif
                 }
             }
         }
@@ -3436,6 +3566,9 @@ static int resolve_precise_vertices(const int *indices, int count,
                 ++s_geometry_diag_cumulative.partial_quad_rejections;
                 if (live) ++live->partial_quad_rejections;
             }
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+            s_precise_vertex_partial = 1;
+#endif
         }
         return 0;
     }
@@ -3452,6 +3585,13 @@ static int resolve_precise_vertices(const int *indices, int count,
     for (int i = 0; i < count; ++i) {
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
         s_precise_vertex_depth[i] = z[i];
+        {
+            uint32_t identity_addr;
+            /* A grown corner is off its model point: it gets the depth and no identity. */
+            if (!grown && gp0_source_word_address(indices[i], &identity_addr))
+                (void)gte_precision_load_identity(identity_addr, gp0_cmd_buf[indices[i]],
+                                                  &s_precise_vertex_identity[i]);
+        }
 #endif
         fx[i] = (int32_t)((int64_t)precise_x[i] +
                           (int64_t)(vx[i] - raw_x[i]) * 65536);
@@ -3471,11 +3611,20 @@ static void queue_precise_triangle(int exact,
     gr_set_world_triangle(0);
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
     gr_set_temporal_depth_triangle(0, 0.0f, 0.0f, 0.0f);
+    gr_set_temporal_identity_triangle(0u, 0u, 0u);
 #endif
     gr_set_perspective_triangle(0, 0.0f, 0.0f, 0.0f);
     if (geometry_enabled) ++ws_geometry_world_triangles;
     if (!geometry_enabled || !exact) {
         gr_set_precise_triangle(0, 0,0, 0,0, 0,0);
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+        /* The corners that did resolve keep their depth: an in-between frame moves them with the camera. */
+        if (geometry_enabled && s_precise_vertex_partial)
+            gr_set_temporal_depth_triangle(2,
+                                           (float)s_precise_vertex_depth[a],
+                                           (float)s_precise_vertex_depth[b],
+                                           (float)s_precise_vertex_depth[c]);
+#endif
         return;
     }
     ++ws_geometry_precise_triangles;
@@ -3485,6 +3634,9 @@ static void queue_precise_triangle(int exact,
                                    (float)s_precise_vertex_depth[a],
                                    (float)s_precise_vertex_depth[b],
                                    (float)s_precise_vertex_depth[c]);
+    gr_set_temporal_identity_triangle(s_precise_vertex_identity[a],
+                                      s_precise_vertex_identity[b],
+                                      s_precise_vertex_identity[c]);
 #endif
     gr_set_precise_triangle(1,
                             fx[a], fy[a], fx[b], fy[b], fx[c], fy[c]);
@@ -3980,10 +4132,14 @@ static void gp0_exec_textured_quad(void) {
 
     /* Widescreen: tagged billboard quads carry CPU-computed pixel offsets the
      * GTE squash never saw — re-squash every X around the prim's anchor. */
+    const int raw_w = abs(vx[1] - vx[0]) + 1, raw_h = abs(vy[2] - vy[0]) + 1;
+    int squashed = 0;
     {
         int32_t ws_ax;
-        if (ws_tagged_anchor(&ws_ax))
+        if (ws_tagged_anchor(&ws_ax)) {
+            squashed = 1;
             for (int i = 0; i < 4; i++) vx[i] = ws_scale_about(vx[i], ws_ax);
+        }
     }
     ws_auto_ui_transform_quad(vx, vy);
     ws_nw_backdrop_stretch_quad(vx, vy);   /* full-frame 2D backdrop image stretch (no-op else) */
@@ -4011,6 +4167,12 @@ static void gp0_exec_textured_quad(void) {
         int bot_v   = vy[0] < vy[2] ? v[2] : v[0];
         if (w > 0 && h > 0) {
             geometry_diag_note_rectangle_fast_path();
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+            float sides[4];
+            const float sprite_depth = temporal_sprite_sides(
+                x - draw_offset_x, y - draw_offset_y, w, h, raw_w, raw_h, squashed, sides);
+            gr_set_temporal_sprite(sprite_depth, sides);
+#endif
             if (right_u - left_u == w && bot_v - top_v == h) {
                 gr_draw_textured_rect(x, y, w, h, left_u, top_v,
                                       clut_x, clut_y, tpage);
