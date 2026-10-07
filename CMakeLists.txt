@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(DisruptorRecomp C CXX)
 
 set(CMAKE_C_STANDARD 99)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 if(WIN32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR
@@ -62,7 +62,7 @@ if(DISRUPTOR_DEV_MENU)
         "${disruptor_imgui_SOURCE_DIR}"
         "${disruptor_imgui_SOURCE_DIR}/backends")
     target_link_libraries(disruptor-imgui PRIVATE ${PSX_SDL_LIBRARIES})
-    target_compile_features(disruptor-imgui PUBLIC cxx_std_17)
+    target_compile_features(disruptor-imgui PUBLIC cxx_std_20)
     if(WIN32)
         target_compile_definitions(
             disruptor-imgui PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:NOMINMAX>")
@@ -190,7 +190,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         FMT_HEADER_ONLY=1
         "$<$<CXX_COMPILER_ID:MSVC>:NOMINMAX>"
         "$<$<CXX_COMPILER_ID:MSVC>:WIN32_LEAN_AND_MEAN>")
-    target_compile_features(disruptor-user-settings-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-user-settings-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_user_settings_persistence
         COMMAND disruptor-user-settings-test)
 
@@ -199,38 +199,38 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_include_directories(disruptor-mouse-aim-test PRIVATE
         tests/stubs)
     target_compile_definitions(disruptor-mouse-aim-test PRIVATE PSX_SDL3=1)
-    target_compile_features(disruptor-mouse-aim-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-mouse-aim-test PRIVATE cxx_std_20)
 
     add_executable(disruptor-cheats-test
         tests/disruptor_cheats_test.cpp)
     target_include_directories(disruptor-cheats-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-cheats-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-cheats-test PRIVATE cxx_std_20)
 
     add_executable(disruptor-vertical-camera-test
         tests/disruptor_vertical_camera_test.cpp)
     target_include_directories(disruptor-vertical-camera-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-vertical-camera-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-vertical-camera-test PRIVATE cxx_std_20)
 
     add_executable(disruptor-far-rendering-test
         tests/disruptor_far_rendering_test.cpp)
     target_include_directories(disruptor-far-rendering-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-far-rendering-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-far-rendering-test PRIVATE cxx_std_20)
 
     add_executable(disruptor-render-arena-test
         tests/disruptor_render_arena_test.cpp)
     target_include_directories(disruptor-render-arena-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-render-arena-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-render-arena-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_render_arena COMMAND disruptor-render-arena-test)
 
     add_executable(disruptor-backdrop-tiles-test
         tests/disruptor_backdrop_tiles_test.cpp)
     target_include_directories(disruptor-backdrop-tiles-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-backdrop-tiles-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-backdrop-tiles-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_backdrop_tiles
         COMMAND disruptor-backdrop-tiles-test)
 
@@ -238,19 +238,19 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         tests/disruptor_billboard_aspect_test.cpp)
     target_include_directories(disruptor-billboard-aspect-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-billboard-aspect-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-billboard-aspect-test PRIVATE cxx_std_20)
 
     add_executable(disruptor-gpu-ws-tag-match-test
         tests/gpu_ws_tag_match_test.cpp)
     target_include_directories(disruptor-gpu-ws-tag-match-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-gpu-ws-tag-match-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-gpu-ws-tag-match-test PRIVATE cxx_std_20)
 
     add_executable(disruptor-gpu-temporal-match-test
         tests/gpu_temporal_match_test.cpp)
     target_include_directories(disruptor-gpu-temporal-match-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-gpu-temporal-match-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-gpu-temporal-match-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_gpu_temporal_match
         COMMAND disruptor-gpu-temporal-match-test)
 
@@ -258,13 +258,13 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         tests/gpu_temporal_mesh_test.cpp)
     target_include_directories(disruptor-gpu-temporal-mesh-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-gpu-temporal-mesh-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-gpu-temporal-mesh-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_gpu_temporal_mesh
         COMMAND disruptor-gpu-temporal-mesh-test)
 
     add_executable(disruptor-presentation-yaw-math-test
         tests/presentation_yaw_math_test.cpp)
-    target_compile_features(disruptor-presentation-yaw-math-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-presentation-yaw-math-test PRIVATE cxx_std_20)
 
     add_executable(disruptor-gte-precision-store-pc-test
         tests/gte_precision_store_pc_test.cpp
@@ -276,7 +276,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         PSX_GTE_REGISTER_TEST=1
         PSX_ENABLE_BLOCK_CYCLES=1)
     target_compile_features(disruptor-gte-precision-store-pc-test PRIVATE
-        cxx_std_17)
+        cxx_std_20)
 
     add_test(NAME disruptor_mouse_aim
         COMMAND disruptor-mouse-aim-test)

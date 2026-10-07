@@ -30,7 +30,7 @@ int main() {
     fs::create_directories(root);
 
     try {
-        const fs::path path = root / fs::u8path(u8"settings-unicode-ü.toml");
+        const fs::path path = root / fs::path(u8"settings-unicode-ü.toml");
         UserSettings missing = PSXRecompV4::load_user_settings(path);
         require(!missing.parse_error && !missing.has_mouse_aim &&
                     !missing.has_vsync && !missing.has_master_volume &&

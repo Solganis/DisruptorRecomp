@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 extern "C" void gte_ws_set_far_threshold(int threshold);
 extern "C" void gte_ws_set_backdrop_repair_enabled(int enabled);
@@ -84,6 +85,11 @@ struct PreferenceState {
 };
 
 PreferenceState g_preferences;
+
+std::string utf8(const fs::path &path) {
+    const std::u8string text = path.u8string();
+    return {text.begin(), text.end()};
+}
 
 bool env_override_present(const char *name) {
     return name && std::getenv(name) != nullptr;
@@ -347,7 +353,7 @@ bool flush_preferences() {
     g_preferences.save_failed = false;
     g_preferences.status = "Settings saved.";
     std::fprintf(stdout, "disruptor: saved in-game settings to %s\n",
-                 g_preferences.path.u8string().c_str());
+                 utf8(g_preferences.path).c_str());
     return true;
 }
 
@@ -470,7 +476,8 @@ void load_preferences_for_session() {
         g_preferences.status = "Runtime settings path is unavailable.";
         return;
     }
-    g_preferences.path = fs::u8path(path);
+    const std::string_view text(path);
+    g_preferences.path = fs::path(std::u8string(text.begin(), text.end()));
     const PSXRecompV4::UserSettings settings =
         PSXRecompV4::load_user_settings(g_preferences.path);
     if (settings.parse_error) {
@@ -970,7 +977,7 @@ void draw_system_tab() {
     ImGui::SeparatorText("Settings persistence");
     ImGui::TextWrapped("Path: %s",
         g_preferences.path.empty()
-            ? "unavailable" : g_preferences.path.u8string().c_str());
+            ? "unavailable" : utf8(g_preferences.path).c_str());
     if (g_preferences.save_failed)
         ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f),
                            "Not saved");
