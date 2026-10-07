@@ -6585,18 +6585,8 @@ int main(int argc, char** argv) {
         if (us.has_low_latency_input) g_low_latency_input = us.low_latency_input ? 1 : 0;
         if (us.has_vsync)             g_video_vsync       = us.vsync;
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
-#if defined(DISRUPTOR_DEV_MENU)
-        /* Disruptor's in-game menu deliberately treats interpolation
-         * activation as session-only while geometry interpolation is
-         * experimental. A legacy settings.toml may still
-         * contain frame_interpolation=true from the generic launcher, but this
-         * game does not auto-restore it.  The explicit environment below
-         * remains available for one-run A/B testing. */
-        g_frame_interpolation = 0;
-#else
         if (us.has_frame_interpolation)
             g_frame_interpolation = us.frame_interpolation ? 1 : 0;
-#endif
         if (us.has_frame_interpolation_fps)
             g_frame_interpolation_fps = us.frame_interpolation_fps;
 #if defined(DISRUPTOR_DEV_MENU)
@@ -6782,6 +6772,10 @@ int main(int argc, char** argv) {
         }
         g_frame_interpolation_blend = g_frame_interpolation_blend_default;
     }
+    /* Geometry in-between frames need exact geometry, as the live switch insists. */
+    if (g_frame_interpolation_blend == PSX_HOST_FRAME_INTERPOLATION_GEOMETRY &&
+        !g_geometry_correction)
+        g_frame_interpolation = 0;
 #endif
     {
         const char *mode_env = std::getenv("PSX_PARAPPA_TIMING_MODE");

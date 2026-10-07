@@ -1,6 +1,6 @@
 /*
- * The menu control for the rate of Disruptor's in-between frames. Built only
- * together with the frame interpolator: a default build has neither.
+ * The menu controls for Disruptor's in-between frames: the switch and the rate.
+ * Built only together with the frame interpolator.
  */
 
 #include "disruptor_present_rate.h"
@@ -14,10 +14,32 @@
 extern "C" void gl_renderer_interpolation_diag(int *enabled, int *suspended, int *history_frames,
                                                double *host_hz, double *target_hz, uint64_t *swaps);
 
+int disruptor_present_rate_enable(int enabled) {
+    int target = 0, blend = 0;
+    psx_host_video_get_interpolation(nullptr, &target, &blend);
+    return psx_host_video_set_interpolation(enabled ? 1 : 0, target, blend) != 0;
+}
+
+int disruptor_present_rate_switch(int available, int *enabled) {
+    int on = 0, changed = 0;
+    psx_host_video_get_interpolation(&on, nullptr, nullptr);
+    bool checked = on != 0;
+    const bool locked = !available && !checked;
+    if (locked) ImGui::BeginDisabled();
+    if (ImGui::Checkbox("In-between frames (experimental)", &checked) &&
+        disruptor_present_rate_enable(checked ? 1 : 0)) {
+        if (enabled) *enabled = checked ? 1 : 0;
+        changed = 1;
+    }
+    if (locked) ImGui::EndDisabled();
+    if (locked) ImGui::TextDisabled("Enable exact geometry before in-between frames.");
+    return changed;
+}
+
 int disruptor_present_rate_apply(int frames_per_second) {
     int enabled = 0, blend = 0;
     psx_host_video_get_interpolation(&enabled, nullptr, &blend);
-    /* Switching in-between frames on stays the launcher's business. */
+    /* The rate never switches in-between frames on: that is the switch's business. */
     return enabled && psx_host_video_set_interpolation(1, frames_per_second, blend) != 0;
 }
 
@@ -38,7 +60,7 @@ int disruptor_present_rate_control(int *accepted) {
     }
     if (!enabled) ImGui::EndDisabled();
     if (!enabled)
-        ImGui::TextDisabled("In-between frames are off in this session.");
+        ImGui::TextDisabled("In-between frames are off.");
     else if (std::getenv("PSX_FRAME_INTERPOLATION_FPS"))
         ImGui::TextDisabled(
             "Pictures shown per second. Applied now and saved, but "

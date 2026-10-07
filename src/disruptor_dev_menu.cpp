@@ -79,6 +79,7 @@ enum PreferenceDirty : uint32_t {
     PREF_FRAME_UNLOCK      = 1u << 19,
     PREF_SHADOW_SHAPE      = 1u << 20,
     PREF_PRESENT_RATE      = 1u << 21,
+    PREF_PRESENT_ENABLED   = 1u << 23,
 };
 
 struct PreferenceState {
@@ -288,6 +289,12 @@ void mark_present_rate(int value) {
     g_preferences.dirty |= PREF_PRESENT_RATE;
 }
 
+void mark_present_enabled(bool value) {
+    g_preferences.pending.has_frame_interpolation = true;
+    g_preferences.pending.frame_interpolation = value;
+    g_preferences.dirty |= PREF_PRESENT_ENABLED;
+}
+
 void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     const auto &pending = g_preferences.pending;
     if (g_preferences.dirty & PREF_MOUSE_AIM) {
@@ -368,6 +375,10 @@ void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     if (g_preferences.dirty & PREF_PRESENT_RATE) {
         settings.has_frame_interpolation_fps = true;
         settings.frame_interpolation_fps = pending.frame_interpolation_fps;
+    }
+    if (g_preferences.dirty & PREF_PRESENT_ENABLED) {
+        settings.has_frame_interpolation = true;
+        settings.frame_interpolation = pending.frame_interpolation;
     }
 }
 
@@ -526,6 +537,8 @@ void apply_pending_preferences() {
     if (g_preferences.dirty & PREF_SHADOW_SHAPE)
         gpu_set_shadow_shape(pending.improved_shadows ? 1 : 0);
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    if (g_preferences.dirty & PREF_PRESENT_ENABLED)
+        (void)disruptor_present_rate_enable(pending.frame_interpolation ? 1 : 0);
     if (g_preferences.dirty & PREF_PRESENT_RATE)
         (void)disruptor_present_rate_apply(pending.frame_interpolation_fps);
 #endif
@@ -755,6 +768,12 @@ void apply_geometry_enabled(bool enabled) {
         gpu_texture_correction_set(0);
         mark_textures(false);
     }
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    if (!enabled) {
+        (void)disruptor_present_rate_enable(0);
+        mark_present_enabled(false);
+    }
+#endif
     gpu_geometry_correction_set(enabled ? 1 : 0);
     mark_geometry(enabled);
 }
@@ -942,6 +961,9 @@ void draw_enhancements_tab() {
     }
 
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    int present_enabled = 0;
+    if (disruptor_present_rate_switch(geometry ? 1 : 0, &present_enabled))
+        mark_present_enabled(present_enabled != 0);
     int present_rate = 0;
     if (disruptor_present_rate_control(&present_rate)) mark_present_rate(present_rate);
 #endif

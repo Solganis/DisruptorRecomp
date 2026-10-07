@@ -18,7 +18,7 @@ option(DISRUPTOR_DEV_MENU
     ON)
 option(DISRUPTOR_FRAME_INTERPOLATION
     "Build the experimental presentation-only frame interpolator"
-    OFF)
+    ON)
 
 set(DISRUPTOR_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_backdrop_tiles.cpp"

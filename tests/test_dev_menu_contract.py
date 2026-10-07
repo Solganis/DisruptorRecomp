@@ -483,7 +483,7 @@ require("flush_preferences();" in shutdown_body and
 require("io.IniFilename = nullptr" in menu,
         "unreviewed ImGui layout state must remain outside persistence")
 require("PSX_DISABLE_FRAME_INTERPOLATION=1" in cmake,
-        "frame interpolation must be compiled out in Disruptor builds")
+        "a Disruptor build must be able to compile frame interpolation out")
 for forbidden in (
     "psx_host_video_set_interpolation",
     "psx_host_video_get_interpolation",
@@ -686,9 +686,13 @@ require("PREF_ASPECT" in function_body(menu, "apply_pending_preferences") and
         "psx_host_video_set_adaptive_view" in
         function_body(menu, "apply_pending_preferences"),
         "a pending aspect choice must survive a soft runtime session")
-require("g_frame_interpolation = 0;" in main_cpp and
-        "does not auto-restore it" in main_cpp,
-        "legacy settings.toml must not auto-restore blurry interpolation")
+require("        if (us.has_frame_interpolation)\n"
+        "            g_frame_interpolation = us.frame_interpolation ? 1 : 0;\n"
+        in main_cpp and
+        "        !g_geometry_correction)\n"
+        "        g_frame_interpolation = 0;\n" in main_cpp,
+        "a saved in-between frames switch must be restored, and geometry "
+        "in-between frames never without exact geometry")
 
 main_settings = main_cpp.index("load_user_settings(settings_path)")
 main_env = main_cpp.index('std::getenv("PSX_GEOMETRY_CORRECTION")')

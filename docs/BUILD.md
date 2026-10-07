@@ -52,10 +52,9 @@ chmod +x build.sh run.sh tools/regen.sh
 
 ## In-between frames
 
-The presentation-only frame interpolator is experimental and compiled out by
-default. Configure with `-DDISRUPTOR_FRAME_INTERPOLATION=ON` to build it, and
-start the game with `PSX_FRAME_INTERPOLATION=1` to use it. **Settings →
-Enhancements** then also offers the in-between frame rate and the shadow shape.
+The presentation-only frame interpolator is built by default and switched on
+in **Settings → Enhancements**. Configure with
+`-DDISRUPTOR_FRAME_INTERPOLATION=OFF` to leave it out.
 
 ## Generated game code
 

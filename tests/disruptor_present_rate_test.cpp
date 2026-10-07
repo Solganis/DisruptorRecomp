@@ -37,6 +37,11 @@ struct Slider {
     int disabled_when_drawn = -1;
     std::string text;
 };
+struct Switch {
+    bool clicked = false;
+    bool shown = false;
+    int disabled_when_drawn = -1;
+};
 
 /* The launcher's override decides which sentence the control shows, so every case sets it itself. */
 void launcher_override(const char *value) {
@@ -48,6 +53,7 @@ void launcher_override(const char *value) {
 }
 Host g_host;
 Slider g_slider;
+Switch g_switch;
 
 }  // namespace
 
@@ -71,6 +77,13 @@ extern "C" void gl_renderer_interpolation_diag(int *, int *, int *, double *host
 
 namespace ImGui {
 void BeginDisabled() { ++g_slider.disabled; }
+bool Checkbox(const char *, bool *value) {
+    g_switch.shown = *value;
+    g_switch.disabled_when_drawn = g_slider.disabled;
+    const bool taken = g_switch.clicked && g_slider.disabled == 0;
+    if (taken) *value = !*value;
+    return taken;
+}
 void EndDisabled() { --g_slider.disabled; }
 void SetNextItemWidth(float) {}
 bool SliderInt(const char *, int *value, int lowest, int highest, const char *, int) {
@@ -155,14 +168,71 @@ void test_the_control_hands_over_what_the_user_chose() {
     expect(disruptor_present_rate_control(&accepted) == 0 && accepted == -7 && g_host.sets == 0 && g_slider.disabled == 0 &&
                g_slider.disabled_when_drawn == 1,
            "with in-between frames off the control is drawn disabled and sets nothing");
-    expect(g_slider.text.find("off in this session") != std::string::npos, "and says why");
+    expect(g_slider.text.find("In-between frames are off") != std::string::npos, "and says why");
+}
+
+void test_the_switch_turns_the_frames_on_and_off() {
+    g_host = Host{};
+    g_host.enabled = 0;
+    expect(disruptor_present_rate_enable(1) == 1 && g_host.sets == 1 && g_host.set_enabled == 1 &&
+               g_host.set_target == 60 && g_host.set_blend == 2,
+           "switching on keeps the rate and the blend mode the host had");
+    g_host = Host{};
+    expect(disruptor_present_rate_enable(0) == 1 && g_host.set_enabled == 0 && g_host.set_target == 60 &&
+               g_host.set_blend == 2,
+           "switching off does too");
+    g_host = Host{};
+    g_host.accepts = 0;
+    expect(disruptor_present_rate_enable(1) == 0 && g_host.sets == 1, "a switch the host refuses is reported as refused");
+
+    int state = -7;
+    g_host = Host{};
+    g_host.enabled = 0;
+    g_slider = Slider{};
+    g_switch = Switch{};
+    expect(disruptor_present_rate_switch(1, &state) == 0 && state == -7 && g_host.sets == 0 && !g_switch.shown &&
+               g_switch.disabled_when_drawn == 0,
+           "a switch nobody touched changes nothing and shows the host's state");
+    g_switch.clicked = true;
+    expect(disruptor_present_rate_switch(1, &state) == 1 && state == 1 && g_host.set_enabled == 1,
+           "a click on a switch that is off turns the frames on and reports it");
+    g_host = Host{};
+    state = -7;
+    expect(disruptor_present_rate_switch(1, &state) == 1 && state == 0 && g_host.set_enabled == 0 && g_switch.shown,
+           "a click on a switch that is on turns them off and reports it");
+    g_host = Host{};
+    g_host.enabled = 0;
+    g_host.accepts = 0;
+    state = -7;
+    expect(disruptor_present_rate_switch(1, &state) == 0 && state == -7 && g_host.sets == 1,
+           "a switch the host refuses is not reported as changed");
+    g_host = Host{};
+    g_host.enabled = 0;
+    expect(disruptor_present_rate_switch(1, nullptr) == 1 && g_host.set_enabled == 1, "the caller may ask for no report");
+
+    g_host = Host{};
+    g_host.enabled = 0;
+    g_slider = Slider{};
+    state = -7;
+    expect(disruptor_present_rate_switch(0, &state) == 0 && state == -7 && g_host.sets == 0 && g_slider.disabled == 0 &&
+               g_switch.disabled_when_drawn == 1,
+           "without exact geometry the switch is drawn disabled and sets nothing");
+    expect(g_slider.text.find("Enable exact geometry") != std::string::npos, "and says what it waits for");
+    g_host = Host{};
+    g_slider = Slider{};
+    state = -7;
+    expect(disruptor_present_rate_switch(0, &state) == 1 && state == 0 && g_host.set_enabled == 0 &&
+               g_switch.disabled_when_drawn == 0 && g_slider.text.empty(),
+           "frames that are on can be switched off without exact geometry too");
 }
 
 }  // namespace
 
 int main() {
     test_the_rate_reaches_the_host();
-    test_the_control_hands_over_what_the_user_chose();    expect(disruptor_present_rate_top(270.0) == 270 && disruptor_present_rate_top(143.86) == 144 &&
+    test_the_control_hands_over_what_the_user_chose();
+    test_the_switch_turns_the_frames_on_and_off();
+    expect(disruptor_present_rate_top(270.0) == 270 && disruptor_present_rate_top(143.86) == 144 &&
                disruptor_present_rate_top(120.4) == 120,
            "the control reaches the display's refresh rate, rounded");
     expect(disruptor_present_rate_top(59.94) == 120 && disruptor_present_rate_top(100.0) == 120 &&

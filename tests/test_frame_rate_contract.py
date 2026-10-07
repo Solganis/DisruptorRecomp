@@ -174,15 +174,23 @@ require(
 require(
     "    if(DISRUPTOR_FRAME_INTERPOLATION)\n"
     "        list(APPEND DISRUPTOR_EXTRA_SOURCES\n"
-    '            "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_present_rate.cpp")\n' in cmake
+    '            "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_present_rate.cpp")\n'
+    in cmake
     and "#ifndef PSX_DISABLE_FRAME_INTERPOLATION\n"
+    "    int present_enabled = 0;\n"
+    "    if (disruptor_present_rate_switch(geometry ? 1 : 0, &present_enabled))\n"
+    "        mark_present_enabled(present_enabled != 0);\n"
     "    int present_rate = 0;\n"
     "    if (disruptor_present_rate_control(&present_rate)) mark_present_rate(present_rate);\n"
-    "#endif\n" in menu
+    "#endif\n"
+    in menu
     and "#ifndef PSX_DISABLE_FRAME_INTERPOLATION\n"
+    "    if (g_preferences.dirty & PREF_PRESENT_ENABLED)\n"
+    "        (void)disruptor_present_rate_enable(pending.frame_interpolation ? 1 : 0);\n"
     "    if (g_preferences.dirty & PREF_PRESENT_RATE)\n"
     "        (void)disruptor_present_rate_apply(pending.frame_interpolation_fps);\n"
-    "#endif\n" in menu,
+    "#endif\n"
+    in menu,
     "a build without the frame interpolator must have no rate control, in the menu or in the sources",
 )
 require(
@@ -190,7 +198,8 @@ require(
     "                         ImGuiSliderFlags_AlwaysClamp) &&\n"
     "        disruptor_present_rate_apply(shown)) {\n"
     "        if (accepted) *accepted = shown;\n"
-    "        changed = 1;\n" in present_control
+    "        changed = 1;\n"
+    in present_control
     and "const int top = disruptor_present_rate_top(display_hz);" in present_control
     and "int shown = disruptor_present_rate_shown(target, top);" in present_control,
     "the control must apply the rate at once and report only a rate the host accepted",
@@ -198,6 +207,41 @@ require(
 require(
     "    return enabled && psx_host_video_set_interpolation(1, frames_per_second, blend) != 0;\n" in present_control,
     "the rate control must not switch in-between frames on by itself, and must keep their blend mode",
+)
+require(
+    '"Build the experimental presentation-only frame interpolator"\n    ON)' in cmake,
+    "the in-between frames must be built unless a build opts out",
+)
+require(
+    "    return psx_host_video_set_interpolation(enabled ? 1 : 0, target, blend) != 0;\n" in present_control
+    and 'if (ImGui::Checkbox("In-between frames (experimental)", &checked) &&\n'
+    "        disruptor_present_rate_enable(checked ? 1 : 0)) {\n"
+    "        if (enabled) *enabled = checked ? 1 : 0;\n"
+    in present_control,
+    "the switch must keep the rate and the blend mode and report only a state the host accepted",
+)
+require(
+    "    if (g_preferences.dirty & PREF_PRESENT_ENABLED) {\n"
+    "        settings.has_frame_interpolation = true;\n"
+    "        settings.frame_interpolation = pending.frame_interpolation;\n" in menu,
+    "a changed switch must reach settings.toml",
+)
+require(
+    "    if (!enabled) {\n"
+    "        (void)disruptor_present_rate_enable(0);\n"
+    "        mark_present_enabled(false);\n" in menu,
+    "switching exact geometry off must ask the host to switch the in-between frames off and always save them as off",
+)
+require(
+    "        if (us.has_frame_interpolation)\n"
+    "            g_frame_interpolation = us.frame_interpolation ? 1 : 0;\n"
+    "        if (us.has_frame_interpolation_fps)\n"
+    in host
+    and "    if (g_frame_interpolation_blend == PSX_HOST_FRAME_INTERPOLATION_GEOMETRY &&\n"
+    "        !g_geometry_correction)\n"
+    "        g_frame_interpolation = 0;\n"
+    in host,
+    "the host must restore the saved switch, and geometry in-between frames not without exact geometry",
 )
 require(
     "    if (g_preferences.dirty & PREF_PRESENT_RATE) {\n"
@@ -208,7 +252,8 @@ require(
 require(
     "(target_fps < 30 || target_fps > 1000))" in host
     and "if (fps == 0 || fps >= 30) g_frame_interpolation_fps = fps;" in host
-    and "if (us.has_frame_interpolation_fps)\n            g_frame_interpolation_fps = us.frame_interpolation_fps;" in host,
+    and "if (us.has_frame_interpolation_fps)\n            g_frame_interpolation_fps = us.frame_interpolation_fps;"
+    in host,
     "the host must take a rate from 30 FPS, from the menu, the environment and the saved settings",
 )
 require(
