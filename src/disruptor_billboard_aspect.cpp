@@ -33,9 +33,9 @@ struct BillboardPacketSite {
     uint8_t packet_gpr;
 };
 
-/* Completed POLY_FT4 packet seams in the audited CPU-projected world-billboard
- * funnels.  func_8003C000 has two construction branches; func_8004300C is the
- * deferred/sorted base-actor pass and submits its completed packet through $a1. */
+/* POLY_FT4 packet seams in the audited CPU-projected world-billboard funnels.
+ * func_8003C000 has two construction branches; func_8004300C is the deferred
+ * base-actor pass. 0x8003D488 precedes its packet's CLUT and page stores. */
 constexpr auto kBillboardPacketSites = std::array<BillboardPacketSite, 6>{{
     {0x8003BB88u, 0xA6030016u, 16u},
     {0x8003BFB0u, 0xA6030016u, 16u},

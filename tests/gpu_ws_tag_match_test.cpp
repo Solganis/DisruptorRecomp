@@ -48,6 +48,30 @@ int main() {
                "changing any completed FT4 word rejects packet reuse");
     }
 
+    for (const std::size_t texture : {std::size_t{2}, std::size_t{4}}) {
+        auto unfinished = original;
+        unfinished[texture] ^= 0xFFFF0000u;
+        expect(psx_ws_tag_match_result(
+                   kStamp + 1u, kStamp, 1, signature, unfinished.data()) ==
+                   PSX_WS_TAG_MATCH,
+               "a packet tagged before its CLUT and texture page were stored "
+               "still matches");
+        unfinished = original;
+        unfinished[texture] ^= 0x00000100u;
+        expect(psx_ws_tag_match_result(
+                   kStamp + 1u, kStamp, 1, signature, unfinished.data()) ==
+                   PSX_WS_TAG_CONTENT_MISMATCH,
+               "the texture coordinates beside them stay in the fingerprint");
+    }
+    for (const std::size_t padded : {std::size_t{6}, std::size_t{8}}) {
+        auto other = original;
+        other[padded] ^= 0x00010000u;
+        expect(psx_ws_tag_match_result(
+                   kStamp + 1u, kStamp, 1, signature, other.data()) ==
+                   PSX_WS_TAG_CONTENT_MISMATCH,
+               "only the CLUT and texture page words are left out");
+    }
+
     auto reused = original;
     reused[7] ^= 1u;
     expect(psx_ws_tag_match_result(
