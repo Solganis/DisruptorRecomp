@@ -31,7 +31,8 @@ configs = read("game.toml") + read("game-widescreen.toml")
 require("0x80040E68u" in camera and
         "disruptor.vertical_camera.renderer" in camera,
         "renderer entry must stay pinned to the audited game function")
-require(configs.count('mod_function_entry_funcs = ["0x80020DD8", "0x80040E68"]') == 2,
+require(configs.count(
+    'mod_function_entry_funcs = ["0x80020DD8", "0x80040E68", "0x8004B3D4"]') == 2,
         "both game configs must emit the renderer function-entry hook")
 
 expected_sites = {

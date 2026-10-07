@@ -23,6 +23,7 @@ set(DISRUPTOR_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_cheats.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_control_probe.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_far_rendering.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_frame_rate.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_mouse_aim.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_render_arena.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_vertical_camera.cpp")
@@ -171,6 +172,11 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hud_scale_contract.py")
 
+    add_test(NAME disruptor_frame_rate_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_frame_rate_contract.py"
+            --require-artifacts)
+
     add_test(NAME disruptor_billboard_aspect_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_billboard_aspect_contract.py")
@@ -245,6 +251,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_compile_features(disruptor-gpu-ws-hud-scale-test PRIVATE cxx_std_17)
     add_test(NAME disruptor_gpu_ws_hud_scale
         COMMAND disruptor-gpu-ws-hud-scale-test)
+
+    add_executable(disruptor-frame-rate-test
+        tests/disruptor_frame_rate_test.cpp)
+    target_include_directories(disruptor-frame-rate-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-frame-rate-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_frame_rate
+        COMMAND disruptor-frame-rate-test)
 
     add_executable(disruptor-billboard-aspect-test
         tests/disruptor_billboard_aspect_test.cpp)

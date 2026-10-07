@@ -10,6 +10,7 @@
 #include "disruptor_cheats.h"
 #include "disruptor_billboard_aspect.h"
 #include "disruptor_far_rendering.h"
+#include "disruptor_frame_rate.h"
 #include "disruptor_mouse_aim.h"
 #include "config_loader.h"
 #include "gpu.h"
@@ -74,6 +75,7 @@ enum PreferenceDirty : uint32_t {
     PREF_MASTER_VOLUME     = 1u << 16,
     PREF_AUDIO_MUTED       = 1u << 17,
     PREF_HUD_SCALE         = 1u << 18,
+    PREF_FRAME_UNLOCK      = 1u << 19,
 };
 
 struct PreferenceState {
@@ -265,6 +267,12 @@ void mark_hud_scale(int value) {
     g_preferences.dirty |= PREF_HUD_SCALE;
 }
 
+void mark_frame_unlock(bool value) {
+    g_preferences.pending.has_frame_unlock = true;
+    g_preferences.pending.frame_unlock = value;
+    g_preferences.dirty |= PREF_FRAME_UNLOCK;
+}
+
 void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     const auto &pending = g_preferences.pending;
     if (g_preferences.dirty & PREF_MOUSE_AIM) {
@@ -333,6 +341,10 @@ void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     if (g_preferences.dirty & PREF_HUD_SCALE) {
         settings.has_hud_scale = true;
         settings.hud_scale = pending.hud_scale;
+    }
+    if (g_preferences.dirty & PREF_FRAME_UNLOCK) {
+        settings.has_frame_unlock = true;
+        settings.frame_unlock = pending.frame_unlock;
     }
 }
 
@@ -431,6 +443,9 @@ void apply_saved_preferences(const PSXRecompV4::UserSettings &settings) {
     if (settings.has_audio_muted)
         (void)psx_host_audio_set_muted(settings.audio_muted ? 1 : 0);
     if (settings.has_hud_scale) gpu_ws_set_hud_scale(settings.hud_scale);
+    if (settings.has_frame_unlock &&
+        !env_override_present("PSX_DISRUPTOR_FRAME_UNLOCK"))
+        disruptor_frame_rate_set_unlocked(settings.frame_unlock ? 1 : 0);
 }
 
 void apply_pending_preferences() {
@@ -481,6 +496,8 @@ void apply_pending_preferences() {
         (void)psx_host_audio_set_muted(pending.audio_muted ? 1 : 0);
     if (g_preferences.dirty & PREF_HUD_SCALE)
         gpu_ws_set_hud_scale(pending.hud_scale);
+    if (g_preferences.dirty & PREF_FRAME_UNLOCK)
+        disruptor_frame_rate_set_unlocked(pending.frame_unlock ? 1 : 0);
 }
 
 void load_preferences_for_session() {
@@ -861,6 +878,23 @@ void draw_enhancements_tab() {
     if (ImGui::Combo("VSync", &vsync_index, kVsyncLabels, 3)) {
         const int requested = vsync_index - 1;
         if (psx_host_video_set_vsync(requested)) mark_vsync(requested);
+    }
+
+    bool unlocked = disruptor_frame_rate_unlocked() != 0;
+    if (ImGui::Checkbox("60 FPS gameplay (experimental)", &unlocked)) {
+        disruptor_frame_rate_set_unlocked(unlocked ? 1 : 0);
+        mark_frame_unlock(unlocked);
+    }
+    draw_status_badge("LIVE", ImVec4(0.35f, 0.90f, 0.45f, 1.0f));
+    DisruptorFrameRateWindow window{};
+    if (disruptor_frame_rate_last_window(&window) && window.vblanks != 0u) {
+        ImGui::TextDisabled(
+            "Game frames: %.1f per second. Frame work: %.2f VBlank average, "
+            "%.2f peak, %u of %u frames over one VBlank.",
+            59.94 * window.frames / window.vblanks,
+            window.average_work_permille / 1000.0,
+            window.peak_work_permille / 1000.0,
+            window.late_frames, window.frames);
     }
 }
 

@@ -2459,6 +2459,10 @@ UserSettings load_user_settings(const fs::path& path) {
                 s.has_hud_scale = true;
             }
         });
+        if (d.contains("frame_unlock")) try_get([&]{
+            s.frame_unlock = toml::find<bool>(d, "frame_unlock");
+            s.has_frame_unlock = true;
+        });
     }
     return s;
 }
@@ -2633,7 +2637,8 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
         s.has_vertical_look || s.has_vertical_sensitivity ||
         s.has_invert_vertical ||
         s.has_high_precision_camera || s.has_geometry_correction ||
-        s.has_perspective_textures || s.has_hud_scale) {
+        s.has_perspective_textures || s.has_frame_unlock ||
+        s.has_hud_scale) {
         f << "\n[disruptor]\n";
         if (s.has_mouse_aim)
             f << "mouse_aim = " << (s.mouse_aim ? "true" : "false") << "\n";
@@ -2669,6 +2674,8 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
             f << "perspective_textures = " << (s.perspective_textures ? "true" : "false") << "\n";
         if (s.has_hud_scale && s.hud_scale >= 50 && s.hud_scale <= 100)
             f << "hud_scale = " << s.hud_scale << "\n";
+        if (s.has_frame_unlock)
+            f << "frame_unlock = " << (s.frame_unlock ? "true" : "false") << "\n";
     }
 
     f.flush();

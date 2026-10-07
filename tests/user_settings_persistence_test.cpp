@@ -79,6 +79,8 @@ int main() {
         written.perspective_textures = true;
         written.has_hud_scale = true;
         written.hud_scale = 70;
+        written.has_frame_unlock = true;
+        written.frame_unlock = true;
         written.has_language = true;
         written.language = "en";
 
@@ -122,7 +124,8 @@ int main() {
                     loaded.geometry_correction &&
                     loaded.has_perspective_textures &&
                     loaded.perspective_textures &&
-                    loaded.has_hud_scale && loaded.hud_scale == 70,
+                    loaded.has_hud_scale && loaded.hud_scale == 70 &&
+                    loaded.has_frame_unlock && loaded.frame_unlock,
                 "Disruptor preferences did not round-trip");
         require(loaded.has_language && loaded.language == "en",
                 "merge-save dropped an unrelated known setting");

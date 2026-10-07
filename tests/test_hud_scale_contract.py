@@ -102,7 +102,7 @@ require(
     "            if (percent >= 50 && percent <= 100) {"
     in settings_loader
     and '            f << "hud_scale = " << s.hud_scale << "\\n";' in settings_loader
-    and "s.has_perspective_textures || s.has_hud_scale) {" in settings_loader,
+    and "        s.has_hud_scale) {" in settings_loader,
     "settings.toml must read and write a valid [disruptor] hud_scale",
 )
 

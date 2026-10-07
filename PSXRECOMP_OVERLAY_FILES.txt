@@ -20,6 +20,7 @@ runtime/include/gpu_render.h
 runtime/include/gpu_sw_renderer.h
 +runtime/include/host_ui.h
 runtime/include/mod_memory.h
+runtime/include/psx_cyc.h
 runtime/include/overlay_dispatch_preamble.c.inc
 runtime/include/ws_aspect_cone_math.h
 runtime/src/boot_state.c
@@ -32,5 +33,6 @@ runtime/src/gte.cpp
 runtime/src/main.cpp
 runtime/src/memory.c
 runtime/src/overlay_loader.c
+runtime/src/psx_cycles.c
 runtime/src/ws_aspect_cone_math.c
 runtime/tests/test_ws_aspect_cone_math.c

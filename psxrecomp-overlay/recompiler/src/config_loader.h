@@ -1104,6 +1104,7 @@ struct UserSettings {
     bool has_geometry_correction = false; bool geometry_correction = false;
     bool has_perspective_textures = false; bool perspective_textures = false;
     bool has_hud_scale = false; int hud_scale = 100;
+    bool has_frame_unlock = false; bool frame_unlock = false;
 };
 
 // GameOptions — the game's OWN native OPTION-screen settings, declared in a
