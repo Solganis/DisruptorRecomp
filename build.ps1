@@ -161,7 +161,12 @@ finally {
     Pop-Location
 }
 
-$Build = Join-Path $Root 'build'
+$BuildName = if ($env:DISRUPTOR_BUILD_DIRECTORY) {
+    $env:DISRUPTOR_BUILD_DIRECTORY
+} else {
+    'build'
+}
+$Build = Join-Path $Root $BuildName
 $BuildFresh = @(Get-CMakeFreshArguments $Build)
 Invoke-Checked {
     cmake @BuildFresh -S $Root -B $Build @Generator -DCMAKE_BUILD_TYPE=Release `

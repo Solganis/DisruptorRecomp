@@ -26,6 +26,8 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 The build verifies the executable, applies the framework overlay, generates and
 audits the translated code, builds the runtime, and runs the tests. The runtime
 is produced in `build/`, or `build/Release/` for a multi-configuration generator.
+Set `DISRUPTOR_BUILD_DIRECTORY` to build into and run from another folder of the
+repository instead. `build.sh` and `run.sh` read it too.
 
 Optional launch switches can be combined:
 
