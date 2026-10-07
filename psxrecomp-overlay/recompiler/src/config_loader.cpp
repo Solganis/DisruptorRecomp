@@ -2452,6 +2452,13 @@ UserSettings load_user_settings(const fs::path& path) {
             s.perspective_textures = toml::find<bool>(d, "perspective_textures");
             s.has_perspective_textures = true;
         });
+        if (d.contains("hud_scale")) try_get([&]{
+            const int percent = toml::find<int>(d, "hud_scale");
+            if (percent >= 50 && percent <= 100) {
+                s.hud_scale = percent;
+                s.has_hud_scale = true;
+            }
+        });
     }
     return s;
 }
@@ -2626,7 +2633,7 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
         s.has_vertical_look || s.has_vertical_sensitivity ||
         s.has_invert_vertical ||
         s.has_high_precision_camera || s.has_geometry_correction ||
-        s.has_perspective_textures) {
+        s.has_perspective_textures || s.has_hud_scale) {
         f << "\n[disruptor]\n";
         if (s.has_mouse_aim)
             f << "mouse_aim = " << (s.mouse_aim ? "true" : "false") << "\n";
@@ -2660,6 +2667,8 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
             f << "geometry_correction = " << (s.geometry_correction ? "true" : "false") << "\n";
         if (s.has_perspective_textures)
             f << "perspective_textures = " << (s.perspective_textures ? "true" : "false") << "\n";
+        if (s.has_hud_scale && s.hud_scale >= 50 && s.hud_scale <= 100)
+            f << "hud_scale = " << s.hud_scale << "\n";
     }
 
     f.flush();
