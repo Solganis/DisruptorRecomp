@@ -25,6 +25,7 @@
 #include "mod_runtime.h"
 #include "ws_cull_detect.h"
 #include "ws_aspect_cone_math.h"
+#include "gpu_ws_hud_scale.h"
 #include "gpu_ws_screen_tile.h"
 #include "gpu_ws_tag_match.h"
 #include "ws_ui_group.h"
@@ -2103,10 +2104,31 @@ static int ws_auto_ui_transform_rect(int32_t *x, int32_t y, int *w, int h) {
     return 1;
 }
 
+static int ws_hud_scale_percent = PSX_WS_HUD_SCALE_MAX;
+void gpu_ws_set_hud_scale(int percent) {
+    ws_hud_scale_percent = psx_ws_hud_scale_clamp(percent);
+}
+int gpu_ws_hud_scale(void) { return ws_hud_scale_percent; }
+
+/* The user's HUD size for an untagged screen-space SPRT. 0 leaves the
+ * stock horizontal squash to the caller. */
+static int ws_hud_user_scale(int32_t *x, int32_t *y, int *w, int *h) {
+    int32_t scaled_w = *w, scaled_h = *h;
+    if (ws_hud_scale_percent >= PSX_WS_HUD_SCALE_MAX ||
+        !psx_ws_hud_scale_rect(x, y, &scaled_w, &scaled_h, ws_disp_w(), ws_disp_h(),
+                               ws_xnum, ws_xden, ws_hud_scale_percent))
+        return 0;
+    *w = (int)scaled_w;
+    *h = (int)scaled_h;
+    return 1;
+}
+
 /* Shared transform for fixed-size textured sprites (8x8 / 16x16 / 1x1 dot):
  * squash *x0 in place (around the tagged anchor, else the HUD pivot) and
- * return the squashed draw width, or 0 = no change. */
-static int ws_sprt_fixed_transform(int32_t *x0, int32_t y0, int w) {
+ * return the squashed draw width, or 0 = no change. *out_h is the draw
+ * height when the user's HUD size changed it, else 0. */
+static int ws_sprt_fixed_transform(int32_t *x0, int32_t *y0, int w, int *out_h) {
+    *out_h = 0;
     if (!ws_active()) return 0;
     int32_t ax;
     if (ws_tagged_anchor(&ax)) {
@@ -2114,9 +2136,14 @@ static int ws_sprt_fixed_transform(int32_t *x0, int32_t y0, int w) {
         return (int)ws_scale_len(w);
     }
     int auto_w = w;
-    if (ws_auto_ui_transform_rect(x0, y0, &auto_w, w))
+    if (ws_auto_ui_transform_rect(x0, *y0, &auto_w, w))
         return auto_w;
     if (ws_hud_sprt) {
+        int scaled_w = w, scaled_h = w;
+        if (ws_hud_user_scale(x0, y0, &scaled_w, &scaled_h)) {
+            *out_h = scaled_h;
+            return scaled_w;
+        }
         *x0 = ws_scale_about(*x0, ws_hud_pivot(*x0, w));
         return (int)ws_scale_len(w);
     }
@@ -4209,7 +4236,7 @@ static void gp0_exec_textured_rect(void) {
     /* Widescreen: tagged sprite parts squash around their projected anchor;
      * untagged SPRTs are screen-space 2D (HUD/menus) and squash around the
      * display centre. Texels keep full coverage via the scaled-rect path. */
-    int ws_w = 0;
+    int ws_w = 0, ws_h = 0;
     if (ws_active() && w > 0) {
         int32_t ws_ax;
         if (ws_screen_tile_take()) {
@@ -4228,21 +4255,25 @@ static void gp0_exec_textured_rect(void) {
             if (ws_auto_ui_transform_rect(&x0, y0, &corrected_w, h))
                 ws_w = corrected_w;
             else if (ws_hud_sprt) {
-                x0 = ws_scale_about(x0, ws_hud_pivot(x0, w));
-                ws_w = (int)ws_scale_len(w);
+                int scaled_w = w, scaled_h = h;
+                if (ws_hud_user_scale(&x0, &y0, &scaled_w, &scaled_h)) {
+                    ws_w = scaled_w;
+                    ws_h = scaled_h;
+                } else {
+                    x0 = ws_scale_about(x0, ws_hud_pivot(x0, w));
+                    ws_w = (int)ws_scale_len(w);
+                }
             }
         }
     }
     x0 += ws_nw_hud_shift(x0, w);   /* native-wide HUD corner re-anchor (no-op else) */
 
     x0 += draw_offset_x; y0 += draw_offset_y;
-    {
-        int dw = (ws_w && ws_w != w) ? ws_w : w;
-        if (draw_area_out_rect(x0, y0, dw, h)) return;
-    }
+    const int dw = ws_w ? ws_w : w, dh = ws_h ? ws_h : h;
+    if (draw_area_out_rect(x0, y0, dw, dh)) return;
     setup_textured_draw(color24, semi_trans, raw_texture);
-    if (ws_w && ws_w != w)
-        gr_draw_textured_rect_scaled(x0, y0, ws_w, h, u0, v0, u0 + w, v0 + h,
+    if (dw != w || dh != h)
+        gr_draw_textured_rect_scaled(x0, y0, dw, dh, u0, v0, u0 + w, v0 + h,
                                      clut_x, clut_y, current_texpage());
     else
         gr_draw_textured_rect(x0, y0, w, h, u0, v0, clut_x, clut_y, current_texpage());
@@ -4268,13 +4299,12 @@ static void gp0_exec_textured_8x8(void) {
     int raw_texture = (gp0_cmd_buf[0] >> 24) & 1;
     int32_t x0, y0;
     parse_vertex(gp0_cmd_buf[1], &x0, &y0);
-    int ws_w = ws_sprt_fixed_transform(&x0, y0, 8);
+    int ws_h = 0;
+    int ws_w = ws_sprt_fixed_transform(&x0, &y0, 8, &ws_h);
     x0 += ws_nw_hud_shift(x0, 8);   /* native-wide HUD corner re-anchor (no-op else) */
     x0 += draw_offset_x; y0 += draw_offset_y;
-    {
-        int dw = (ws_w && ws_w != 8) ? ws_w : 8;
-        if (draw_area_out_rect(x0, y0, dw, 8)) return;
-    }
+    const int dw = ws_w ? ws_w : 8, dh = ws_h ? ws_h : 8;
+    if (draw_area_out_rect(x0, y0, dw, dh)) return;
     int u0 = gp0_cmd_buf[2] & 0xFF;
     int v0 = (gp0_cmd_buf[2] >> 8) & 0xFF;
     uint16_t clut = (uint16_t)(gp0_cmd_buf[2] >> 16);
@@ -4282,8 +4312,8 @@ static void gp0_exec_textured_8x8(void) {
     uint16_t clut_y = (clut >> 6) & 0x1FF;
 
     setup_textured_draw(color24, semi_trans, raw_texture);
-    if (ws_w && ws_w != 8)
-        gr_draw_textured_rect_scaled(x0, y0, ws_w, 8, u0, v0, u0 + 8, v0 + 8,
+    if (dw != 8 || dh != 8)
+        gr_draw_textured_rect_scaled(x0, y0, dw, dh, u0, v0, u0 + 8, v0 + 8,
                                      clut_x, clut_y, current_texpage());
     else
         gr_draw_textured_rect(x0, y0, 8, 8, u0, v0, clut_x, clut_y, current_texpage());
@@ -4312,7 +4342,8 @@ static void gp0_exec_textured_16x16(void) {
     /* Never suppress MMX6 BG packets at a guessed finite-map boundary. The
      * classifier cannot distinguish an authored layer entering the reveal from
      * a stale ring slot; suppressing here caused the stage-start black flicker. */
-    int ws_w = ws_sprt_fixed_transform(&x0, y0, 16);
+    int ws_h = 0;
+    int ws_w = ws_sprt_fixed_transform(&x0, &y0, 16, &ws_h);
     x0 += ws_nw_hud_shift(x0, 16);   /* native-wide HUD corner re-anchor (no-op else) */
     x0 += draw_offset_x; y0 += draw_offset_y;
     int u0 = gp0_cmd_buf[2] & 0xFF;
@@ -4321,13 +4352,11 @@ static void gp0_exec_textured_16x16(void) {
     uint16_t clut_x = (clut & 0x3F) * 16;
     uint16_t clut_y = (clut >> 6) & 0x1FF;
 
-    {
-        int dw = (ws_w && ws_w != 16) ? ws_w : 16;
-        if (draw_area_out_rect(x0, y0, dw, 16)) return;
-    }
+    const int dw = ws_w ? ws_w : 16, dh = ws_h ? ws_h : 16;
+    if (draw_area_out_rect(x0, y0, dw, dh)) return;
     setup_textured_draw(color24, semi_trans, raw_texture);
-    if (ws_w && ws_w != 16)
-        gr_draw_textured_rect_scaled(x0, y0, ws_w, 16, u0, v0, u0 + 16, v0 + 16,
+    if (dw != 16 || dh != 16)
+        gr_draw_textured_rect_scaled(x0, y0, dw, dh, u0, v0, u0 + 16, v0 + 16,
                                      clut_x, clut_y, current_texpage());
     else
         gr_draw_textured_rect(x0, y0, 16, 16, u0, v0, clut_x, clut_y, current_texpage());
@@ -5214,7 +5243,8 @@ static void gp0_execute_command(void) {
             int raw_texture = (gp0_cmd_buf[0] >> 24) & 1;
             int32_t x0, y0;
             parse_vertex(gp0_cmd_buf[1], &x0, &y0);
-            (void)ws_sprt_fixed_transform(&x0, y0, 1);  /* position only; 1px stays 1px */
+            int dot_h;
+            (void)ws_sprt_fixed_transform(&x0, &y0, 1, &dot_h);  /* position only; 1px stays 1px */
             x0 += draw_offset_x; y0 += draw_offset_y;
             int u0 = gp0_cmd_buf[2] & 0xFF;
             int v0 = (gp0_cmd_buf[2] >> 8) & 0xFF;
