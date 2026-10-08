@@ -28,6 +28,7 @@
 #include "gpu_ws_hud_scale.h"
 #include "gpu_ws_screen_tile.h"
 #include "gpu_ws_tag_match.h"
+#include "gpu_ws_frame_kind.h"
 #include "gpu_temporal_sprite.h"
 #include "ws_ui_group.h"
 #include <math.h>
@@ -208,6 +209,8 @@ static int ws_gameplay_state_value_count = 0;
  * intro-cutscene flicker). Only a genuine full-2D screen — no GTE projection for
  * this many consecutive frames (save/options/memory-card) — reverts to 4:3. */
 #define WS_GTE_GAME_MODE_HYSTERESIS 45u
+static PsxWsFrameKinds ws_frame_kinds;
+static uint32_t display_area_x, display_area_y;
 void gpu_ws_set_gte_game_mode(int on) { ws_gte_game_mode_cfg = on ? 1 : 0; }
 void gpu_ws_set_gameplay_state_gate(uint32_t addr,
                                     const uint32_t *values, int nvalues) {
@@ -271,6 +274,7 @@ static uint32_t ws_sust_ovh_stamp = (uint32_t)-1000;
 
 void psx_ws_note_gte_project(int nverts) {
     uint32_t f = (uint32_t)s_frame_count;
+    psx_ws_frame_kinds_project(&ws_frame_kinds, (uint32_t)nverts);
     if (f != ws_gte_frame) {
         if (f == ws_gte_frame + 1u) ws_gte_prev_verts = ws_gte_count;
         else                        ws_gte_prev_verts = 0;
@@ -293,14 +297,22 @@ static int ws_full_2d_mode(void) {
     if (env < 0) { const char *e = getenv("PSX_WS_FORCE_2D"); env = (e && e[0] == '1') ? 1 : 0; }
     return ws_full_2d || env;
 }
-static int ws_game_mode(void) {
+/* `displayed` asks about the frame on display, which a double-buffered game drew one frame before the one it is
+ * drawing now. A GTE-detected game's frames are told apart per buffer, and the grace below only covers the start. */
+static int ws_game_mode_of(int displayed) {
     int state_match = ws_gameplay_state_matches();
     if (state_match >= 0) return state_match;
     if (ws_full_2d_mode()) return 1;
-    if (ws_gte_game_mode_cfg &&
-        (uint32_t)s_frame_count - ws_last_gte_stamp <= WS_GTE_GAME_MODE_HYSTERESIS) return 1;
+    if (ws_gte_game_mode_cfg) {
+        const int flat = displayed
+            ? psx_ws_frame_kinds_displayed(&ws_frame_kinds, display_area_x, display_area_y)
+            : psx_ws_frame_kinds_drawing(&ws_frame_kinds, WS_GTE_GAME_MODE_MIN_VERTS);
+        if (flat >= 0) return !flat;
+        if ((uint32_t)s_frame_count - ws_last_gte_stamp <= WS_GTE_GAME_MODE_HYSTERESIS) return 1;
+    }
     return (uint32_t)s_frame_count - ws_last_tag_stamp <= 2;
 }
+static int ws_game_mode(void) { return ws_game_mode_of(0); }
 
 /* True when the current frame is presented at native 4:3 (NOT stretched), so
  * ALL squash must be suppressed and the content rendered pixel-native:
@@ -335,9 +347,9 @@ static int ws_2d_only_scene(void) {
 static uint32_t s_ws_fmv_frame_cache = 0xFFFFFFFFu;
 static int      s_ws_fmv_cached = 0;
 
-int gpu_ws_present_native_43(void) {
+static int ws_native_43(int displayed) {
     if (!ws_engaged()) return 0;
-    if (!ws_game_mode()) return 1;                 /* full-2D screen */
+    if (!ws_game_mode_of(displayed)) return 1;     /* full-2D screen */
     if (ws_2d_only_scene()) return 1;              /* 2D-only gameplay scene */
     uint32_t f = (uint32_t)s_frame_count;
     if (f != s_ws_fmv_frame_cache) {
@@ -347,6 +359,9 @@ int gpu_ws_present_native_43(void) {
     }
     return s_ws_fmv_cached;
 }
+int gpu_ws_present_native_43(void) { return ws_native_43(0); }
+int gpu_ws_displayed_native_43(void) { return ws_native_43(1); }
+void gpu_ws_tell_frame_kind(int flat) { psx_ws_frame_kinds_tell(&ws_frame_kinds, flat); }
 
 /* Squash applies only when configured AND the frame is being stretched. */
 static int ws_active(void) { return ws_configured() && !gpu_ws_present_native_43(); }
@@ -2718,6 +2733,7 @@ void gpu_ws_begin_linked_list(void) {
 
 void gpu_set_gp0_linked_list_node(uint32_t addr, uint32_t word_count) {
     (void)addr;
+    psx_ws_frame_kinds_list(&ws_frame_kinds, 1);
     if (word_count == 0) {
         gp0_ot_rank = gp0_ot_rank == 0xFFFFu ? 0u
                                              : (uint16_t)(gp0_ot_rank + 1u);
@@ -2725,6 +2741,7 @@ void gpu_set_gp0_linked_list_node(uint32_t addr, uint32_t word_count) {
 }
 
 void gpu_ws_end_linked_list(void) {
+    psx_ws_frame_kinds_list(&ws_frame_kinds, 0);
     gp0_ot_rank = 0xFFFFu;
 }
 
@@ -4598,6 +4615,7 @@ static void gp0_exec_draw_area_tl(void) {
     gr_set_draw_area((int)draw_area_left, (int)draw_area_top,
                      (int)draw_area_right, (int)draw_area_bottom);
     ws_nw_sync_target();  /* back buffer (draw_area_left) → wide mirror surface */
+    psx_ws_frame_kinds_area(&ws_frame_kinds, draw_area_left, draw_area_top, WS_GTE_GAME_MODE_MIN_VERTS);
 }
 
 static void gp0_exec_draw_area_br(void) {

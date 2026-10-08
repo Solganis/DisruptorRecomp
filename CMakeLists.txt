@@ -190,6 +190,10 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_far_rendering_contract.py")
 
+    add_test(NAME disruptor_frame_kind_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_frame_kind_contract.py")
+
     add_test(NAME disruptor_temporal_presenter_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_temporal_presenter_contract.py")
@@ -274,6 +278,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_compile_features(disruptor-backdrop-tiles-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_backdrop_tiles
         COMMAND disruptor-backdrop-tiles-test)
+
+    add_executable(disruptor-gpu-ws-frame-kind-test
+        tests/gpu_ws_frame_kind_test.cpp)
+    target_include_directories(disruptor-gpu-ws-frame-kind-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-ws-frame-kind-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_gpu_ws_frame_kind
+        COMMAND disruptor-gpu-ws-frame-kind-test)
 
     add_executable(disruptor-gpu-ws-hud-scale-test
         tests/gpu_ws_hud_scale_test.cpp)
