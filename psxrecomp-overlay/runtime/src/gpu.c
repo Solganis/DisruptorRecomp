@@ -5808,7 +5808,11 @@ static void gp1_display_mode(uint32_t val) {
     hres1 = val & 3;
     vres = (val >> 2) & 1;
     video_mode = (val >> 3) & 1;
-    display_depth = (val >> 4) & 1;
+    const uint32_t depth = (val >> 4) & 1;
+    /* A 24-bit scanout reads the CPU copy of VRAM, and a GPU backend leaves that copy without what it drew. Disruptor
+     * blacks out its movie's area with a rectangle a few VBlanks before it switches, so sync once, at the switch. */
+    if (depth && !display_depth) (void)gr_vram_read(0, 0);
+    display_depth = depth;
     vertical_interlace = (val >> 5) & 1;
     /* GPUSTAT.13 holds the legacy constant 0 in progressive (see the vblank
      * field flip); clear it on the switch so a title that toggles interlace
