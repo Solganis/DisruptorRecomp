@@ -49,6 +49,8 @@ void gr_set_precise_triangle(int enabled,
                              int32_t x0, int32_t y0,
                              int32_t x1, int32_t y1,
                              int32_t x2, int32_t y2);
+/* One-shot presentation positions of a triangle without exact provenance: where its pinned corners project. */
+void gr_set_unpinned_triangle(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2);
 /* One-shot reciprocal-depth metadata for the next textured triangle.  Only a
  * backend with a separate presentation surface should implement this; the
  * authoritative PS1 framebuffer must retain affine texture interpolation. */
@@ -221,6 +223,7 @@ typedef struct GpuRenderBackend {
      * pixel count, writes width/height to ow/oh. NULL if unsupported. */
     int  (*wide_dump_full)(uint32_t *out, int cap_pixels, int *ow, int *oh,
                            int base_x);
+    void (*set_unpinned_triangle)(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2);
 } GpuRenderBackend;
 
 #ifdef __cplusplus

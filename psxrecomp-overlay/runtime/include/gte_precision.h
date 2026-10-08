@@ -100,6 +100,9 @@ int gte_precision_scratch_store_pc_route_clamp(
     uint32_t store_pc, uint32_t instruction,
     int16_t low_x, int16_t high_x, int16_t low_y, int16_t high_y);
 int gte_precision_word_clamped(uint32_t addr, uint32_t packed);
+/* Whether a corner the game pinned is drawn where it projects when the GTE saturated it or its polygon falls back. */
+int gte_precision_unpin_enabled(void);
+void gte_precision_unpin_set(int enabled);
 void gte_precision_scratch_store_pc_word(
     uint32_t store_pc, uint32_t instruction,
     uint32_t addr, uint32_t packed);

@@ -13,6 +13,15 @@ extern "C" void gte_test_seed_precise_projection(
     uint32_t index, uint32_t packed, int32_t x16, int32_t y16, uint16_t z);
 extern "C" void gte_test_set_precise_perspective_valid(
     uint32_t index, int valid);
+extern "C" void gte_test_set_precise_exact(uint32_t index, int saturated, int unbounded, int32_t exact_x16, int32_t exact_y16);
+extern "C" void gte_test_get_precise_exact(uint32_t index, int *saturated, int *unbounded, int32_t *exact_x16, int32_t *exact_y16);
+extern "C" void gte_test_get_precise_projection(
+    uint32_t index, uint32_t *packed, int32_t *x16, int32_t *y16, uint16_t *z, uint8_t *valid);
+extern "C" void gte_execute(CPUState *cpu, uint32_t cmd);
+extern "C" void gte_write_data(CPUState *cpu, uint8_t reg, uint32_t val);
+extern "C" void gte_write_ctrl(CPUState *cpu, uint8_t reg, uint32_t val);
+extern "C" void gte_set_display_aspect(int num, int den);
+extern "C" void gte_ws_set_dome_expand(int on, int aspect_num, int aspect_den);
 
 /* gte.cpp runtime dependencies that are irrelevant to provenance storage. */
 extern "C" int gpu_ws_present_native_43(void) { return 0; }
@@ -790,6 +799,227 @@ int test_scratch_guard_band_keeps_the_projection() {
     return 0;
 }
 
+/* What a lookup gives for a corner that went through the scratch store. */
+struct Arrival {
+    GtePrecisionLookupResult result;
+    bool exact, kept, pinned;
+};
+
+/* The projection the GTE holds last, packed as `gte_packed`, is read by the game, stored as `stored` and copied on. */
+Arrival deliver(uint32_t index, uint32_t gte_packed, uint32_t stored, int32_t kept_x16, int32_t kept_y16,
+                int32_t exact_x16, int32_t exact_y16, uint16_t depth) {
+    const uint32_t slot = kScratchFirst + index * kScratchStride;
+    const CopyRoute *route = scratch_route_for_slot(slot);
+    const uint32_t destination = 0x00163000u + index * 4u;
+    Arrival seen{GTE_PRECISION_LOOKUP_STORE_MISS, false, false, false};
+    if (!route || !add_copy(*route)) return seen;
+    capture(kOtherMfc2Pc, gte_packed);
+    scratch_commit(slot);
+    scratch_store(slot, stored);
+    copy_read(*route, slot, stored);
+    commit(destination);
+    copy_store(*route, destination, stored);
+    int32_t x16 = 0, y16 = 0;
+    uint16_t z = 0;
+    seen.result = gte_precision_load_word_ex(destination, stored, &x16, &y16, &z);
+    seen.exact = x16 == exact_x16 && y16 == exact_y16 && z == depth;
+    seen.kept = x16 == kept_x16 && y16 == kept_y16 && z == depth;
+    seen.pinned = gte_precision_word_clamped(destination, stored) == 1;
+    return seen;
+}
+
+/* The GTE projected a corner to `gte_packed`, an exact divide to (x, y), and the game stored `stored`. */
+Arrival arrive(uint32_t index, uint32_t gte_packed, uint32_t stored, int saturated, int unbounded, int x, int y) {
+    const int32_t kept_x16 = static_cast<int16_t>(gte_packed & 0xFFFFu) * 65536 + 0x4000;
+    const int32_t kept_y16 = static_cast<int16_t>(gte_packed >> 16) * 65536 + 0x8000;
+    const int32_t exact_x16 = x * 65536 + 0x2000;
+    const int32_t exact_y16 = y * 65536 + 0x6000;
+    gte_test_seed_precise_projection(2, gte_packed, kept_x16, kept_y16, kZ);
+    gte_test_set_precise_exact(2, saturated, unbounded, exact_x16, exact_y16);
+    return deliver(index, gte_packed, stored, kept_x16, kept_y16, exact_x16, exact_y16, kZ);
+}
+
+bool refused(const Arrival &seen) {
+    return seen.result == GTE_PRECISION_LOOKUP_SATURATED && !seen.exact && !seen.kept && !seen.pinned;
+}
+bool at_exact(const Arrival &seen) {
+    return seen.result == GTE_PRECISION_LOOKUP_ACCEPTED && seen.exact && !seen.kept && seen.pinned;
+}
+bool at_kept(const Arrival &seen, bool pinned) {
+    return seen.result == GTE_PRECISION_LOOKUP_ACCEPTED && seen.kept && !seen.exact && seen.pinned == pinned;
+}
+
+int test_pinned_corner_takes_the_exact_projection() {
+    reset_fixture();
+    if (!add_capture(kOtherMfc2Pc) || !add_scratch_store())
+        return fail("scratch route registration failed");
+    if (!gte_precision_scratch_store_pc_route_clamp(kScratchStorePc, kStoreInsn, -0x100, 0x240, -0x100, 0x1F0))
+        return fail("the guard band of the reviewed route was refused");
+    const uint32_t screen_edge = pack(1023, 130), band_edge = pack(0x240, 130);
+    if (!refused(arrive(0, screen_edge, screen_edge, 1, 1, 3000, 130)))
+        return fail("a saturated corner the game did not pin was not refused");
+    if (!at_exact(arrive(1, screen_edge, band_edge, 1, 1, 3000, 130)))
+        return fail("a corner saturated on the right and pinned did not take its exact projection");
+    if (!at_exact(arrive(2, pack(-1024, -1024), pack(-0x100, -0x100), 1, 1, -5000, -4000)))
+        return fail("a corner saturated on two sides and pinned did not take its exact projection");
+    if (!refused(arrive(3, screen_edge, band_edge, 1, 0, 3000, 130)))
+        return fail("a saturated corner without an exact projection was not refused");
+    if (arrive(4, screen_edge, pack(0x240, 131), 1, 1, 3000, 130).result != GTE_PRECISION_LOOKUP_STORE_MISS)
+        return fail("a word that is not the pinned saturated projection created provenance");
+
+    /* The divide stopped short and the screen did not: the GTE's 610 stands for 1060. */
+    const uint32_t short_of = pack(610, 130);
+    if (!at_kept(arrive(5, short_of, short_of, 0, 1, 1060, 130), false))
+        return fail("a corner the game did not pin left the pixel the GTE gave it");
+    if (!at_exact(arrive(6, short_of, band_edge, 0, 1, 1060, 130)))
+        return fail("a pinned corner whose divide stopped short did not take its exact projection");
+    if (!at_kept(arrive(7, pack(600, 130), band_edge, 0, 0, 1060, 130), true))
+        return fail("a pinned corner the GTE projected in full was moved off its projection");
+
+    reset_fixture();
+    if (!add_capture(kOtherMfc2Pc) || !add_scratch_store() ||
+        !gte_precision_scratch_store_pc_route_clamp(kScratchStorePc, kStoreInsn, -0x100, 0x240, -0x100, 0x1F0))
+        return fail("the scratch route was not registered a second time");
+    gte_precision_unpin_set(0);
+    const bool off = !gte_precision_unpin_enabled() && refused(arrive(0, screen_edge, band_edge, 1, 1, 3000, 130)) &&
+                     at_kept(arrive(1, short_of, band_edge, 0, 1, 1060, 130), true);
+    gte_precision_unpin_set(1);
+    if (!off) return fail("with the switch off a pinned corner was not left as the GTE and the game put it");
+    if (!gte_precision_unpin_enabled() || !at_exact(arrive(2, screen_edge, band_edge, 1, 1, 3000, 130)))
+        return fail("the switch did not come back on");
+    return 0;
+}
+
+struct Projected {
+    uint32_t packed;
+    int32_t x16, y16, exact_x16, exact_y16;
+    int saturated, unbounded;
+};
+
+/* One vertex through the GTE itself: identity rotation, a focal length of 160, the screen centre at 160, 120 unless given. */
+Projected project(int x, int y, int z, int centre_x = 160, int centre_y = 120) {
+    CPUState cpu{};
+    const uint32_t rotation[5] = {0x1000u, 0u, 0x1000u, 0u, 0x1000u};
+    for (uint8_t reg = 0; reg < 5; ++reg) gte_write_ctrl(&cpu, reg, rotation[reg]);
+    for (uint8_t reg = 5; reg < 8; ++reg) gte_write_ctrl(&cpu, reg, 0u);
+    gte_write_ctrl(&cpu, 24, static_cast<uint32_t>(centre_x * 65536));
+    gte_write_ctrl(&cpu, 25, static_cast<uint32_t>(centre_y * 65536));
+    gte_write_ctrl(&cpu, 26, 160u);
+    gte_write_ctrl(&cpu, 27, 0u);
+    gte_write_ctrl(&cpu, 28, 0u);
+    gte_write_data(&cpu, 0, (static_cast<uint32_t>(y) << 16) | (static_cast<uint32_t>(x) & 0xFFFFu));
+    gte_write_data(&cpu, 1, static_cast<uint32_t>(z) & 0xFFFFu);
+    gte_execute(&cpu, 0x00180001u);
+    Projected seen{};
+    uint16_t depth = 0;
+    uint8_t valid = 0;
+    gte_test_get_precise_projection(2, &seen.packed, &seen.x16, &seen.y16, &depth, &valid);
+    gte_test_get_precise_exact(2, &seen.saturated, &seen.unbounded, &seen.exact_x16, &seen.exact_y16);
+    return seen;
+}
+
+/* The record still holds what the GTE itself projected to: the game's pixel is its whole part. */
+bool keeps_the_gte_projection(const Projected &seen) {
+    return (seen.x16 >> 16) == static_cast<int16_t>(seen.packed & 0xFFFFu) || seen.saturated;
+}
+
+int test_exact_projection_where_the_gte_stops_short() {
+    constexpr int32_t kCentreX = 160 << 16, kCentreY = 120 << 16;
+    constexpr int32_t kLimit = INT32_C(1) << 30;
+    gte_set_display_aspect(4, 3);
+    Projected seen = project(100, 50, 400);
+    if (seen.saturated || seen.unbounded || seen.packed != pack(199, 139) || (seen.x16 >> 16) != 199 || (seen.y16 >> 16) != 139)
+        return fail("a projection inside the GTE's screen was marked or replaced");
+
+    seen = project(600, 10, 100);
+    const int32_t tenth = (160 << 16) / 100;
+    if (!seen.saturated || !seen.unbounded || seen.packed != pack(1023, 136) ||
+        seen.exact_x16 != kCentreX + 600 * tenth || seen.exact_y16 != kCentreY + 10 * tenth)
+        return fail("a projection past the right of the GTE's screen was not kept where it falls");
+
+    seen = project(600, 0, 40);
+    if (!seen.saturated || !seen.unbounded || seen.exact_x16 != kCentreX + 600 * ((160 << 16) / 40) || seen.exact_y16 != kCentreY)
+        return fail("a projection the GTE's divide and screen both stopped was not divided exactly");
+
+    /* Twice the depth fits the focal length: the divide stops at 2 and the screen is not reached. */
+    seen = project(300, 10, 40);
+    if (seen.saturated || !seen.unbounded || seen.packed != pack(759, 139) || !keeps_the_gte_projection(seen) ||
+        seen.exact_x16 != kCentreX + 300 * ((160 << 16) / 40) || seen.exact_y16 != kCentreY + 10 * ((160 << 16) / 40))
+        return fail("a projection only the GTE's divide stopped was not divided exactly beside the GTE's own");
+    seen = project(300, 10, 80);
+    if (seen.saturated || !seen.unbounded || seen.exact_x16 != kCentreX + 300 * ((160 << 16) / 80))
+        return fail("the divide stops when twice the depth equals the focal length, and that was not divided exactly");
+    seen = project(300, 10, 81);
+    if (seen.saturated || seen.unbounded)
+        return fail("a projection the GTE divided in full was given a second one");
+
+    /* The dome probe widens a far projection, and an exact one beside it would not be the widened one. */
+    gte_ws_set_dome_expand(1, 16, 9);
+    seen = project(12000, 0, 1000);
+    const bool probed = seen.saturated && !seen.unbounded;
+    gte_ws_set_dome_expand(0, 16, 9);
+    seen = project(12000, 0, 1000);
+    if (!probed || !seen.saturated || !seen.unbounded)
+        return fail("an exact projection was kept beside one the dome probe widened, or not kept without the probe");
+
+    seen = project(30000, 15000, 1);
+    double across = static_cast<double>(seen.exact_x16) - kCentreX, down = static_cast<double>(seen.exact_y16) - kCentreY;
+    if (!seen.unbounded || seen.exact_x16 < kLimit - 2 || seen.exact_x16 >= kLimit || down < across * 0.4999 || down > across * 0.5001)
+        return fail("a projection too far for a 16.16 coordinate was not brought nearer along its ray");
+    /* A screen centre far from the origin takes its share of the coordinate. */
+    seen = project(-30000, 15000, 1, -10000, 9000);
+    across = static_cast<double>(seen.exact_x16) + 10000.0 * 65536.0, down = static_cast<double>(seen.exact_y16) - 9000.0 * 65536.0;
+    if (!seen.unbounded || seen.exact_x16 > -kLimit + 2 || seen.exact_x16 <= -kLimit || seen.exact_y16 >= kLimit ||
+        down < -across * 0.4999 || down > -across * 0.5001)
+        return fail("with a far screen centre the exact place did not stay inside the coordinate, on its ray");
+    seen = project(-30000, 15000, 1, 10000, 120);
+    across = static_cast<double>(seen.exact_x16) - 10000.0 * 65536.0, down = static_cast<double>(seen.exact_y16) - kCentreY;
+    if (!seen.unbounded || seen.exact_x16 <= -kLimit || seen.exact_x16 >= kLimit || seen.exact_y16 >= kLimit || across >= -kLimit / 4 ||
+        down < -across * 0.4999 || down > -across * 0.5001)
+        return fail("a displacement against a far screen centre left the coordinate or its ray");
+    seen = project(600, 20000, 1, 160, 16000);
+    if (!seen.unbounded || seen.exact_y16 < kLimit - 2 || seen.exact_y16 >= kLimit)
+        return fail("the room down the screen was not counted with its own centre");
+    seen = project(30000, 0, 1, 20000, 120);
+    if (seen.unbounded)
+        return fail("a screen centre that fills the coordinate by itself left room for an exact place");
+    seen = project(600, 0, 0);
+    if (seen.unbounded)
+        return fail("a vertex on the camera plane was given a projection");
+    seen = project(600, 0, -40);
+    if (seen.unbounded)
+        return fail("a vertex behind the camera was given a projection");
+
+    gte_set_display_aspect(16, 9);
+    seen = project(1200, 10, 100);
+    bool wide = seen.saturated && seen.unbounded &&
+                seen.exact_x16 == kCentreX + static_cast<int32_t>(static_cast<int64_t>(1200) * tenth * 3 / 4) &&
+                seen.exact_y16 == kCentreY + 10 * tenth;
+    /* 300 across at a depth of 40 lands on 609 by the GTE and on 1060 by an exact divide. */
+    seen = project(300, 10, 40);
+    wide = wide && !seen.saturated && seen.unbounded && seen.packed == pack(609, 139) && keeps_the_gte_projection(seen) &&
+           seen.exact_x16 == kCentreX + 900 * 65536 && seen.exact_y16 == kCentreY + 40 * 65536;
+    gte_set_display_aspect(4, 3);
+    if (!wide) return fail("at 16:9 the exact projection was not squashed across, or was squashed down");
+
+    /* The whole way for that corner: out of the GTE itself, read by the game, stored as it is or pinned, copied, looked up. */
+    reset_fixture();
+    if (!add_capture(kOtherMfc2Pc) || !add_scratch_store() ||
+        !gte_precision_scratch_store_pc_route_clamp(kScratchStorePc, kStoreInsn, -0x100, 0x240, -0x100, 0x1F0))
+        return fail("the scratch route was not registered for the whole way");
+    gte_set_display_aspect(16, 9);
+    seen = project(300, 10, 40);
+    gte_set_display_aspect(4, 3);
+    if (!at_kept(deliver(0, seen.packed, seen.packed, seen.x16, seen.y16, seen.exact_x16, seen.exact_y16, 40), false))
+        return fail("the corner as the GTE left it did not arrive on the GTE's pixel");
+    gte_set_display_aspect(16, 9);
+    seen = project(300, 10, 40);
+    gte_set_display_aspect(4, 3);
+    if (!at_exact(deliver(1, seen.packed, pack(0x240, 139), seen.x16, seen.y16, kCentreX + 900 * 65536, kCentreY + 40 * 65536, 40)))
+        return fail("the corner the game pinned from 609 to 576 did not arrive at 1060");
+    return 0;
+}
+
 int test_scratch_twenty_routes_are_independent_one_shot() {
     reset_fixture();
     if (!add_capture(kOtherMfc2Pc) || !add_scratch_store())
@@ -1050,6 +1280,8 @@ int main() {
     if (int rc = test_copy_speculation_replay_and_timeline()) return rc;
     if (int rc = test_scratch_nine_slots_and_fail_closed_domains()) return rc;
     if (int rc = test_scratch_guard_band_keeps_the_projection()) return rc;
+    if (int rc = test_pinned_corner_takes_the_exact_projection()) return rc;
+    if (int rc = test_exact_projection_where_the_gte_stops_short()) return rc;
     if (int rc = test_scratch_twenty_routes_are_independent_one_shot()) return rc;
     if (int rc = test_scratch_replay_speculation_and_timeline()) return rc;
     if (int rc = test_perspective_depth_validity_propagates()) return rc;
