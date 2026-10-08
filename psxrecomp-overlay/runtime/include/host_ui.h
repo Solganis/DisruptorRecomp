@@ -85,6 +85,18 @@ int psx_host_ui_register(const PsxHostUiHooks *hooks);
 uint32_t psx_host_ui_capture_flags(void);
 int psx_host_ui_game_input_captured(void);
 
+/* A game module's fast-forward. While its query answers non-zero the frontend
+ * runs guest frames unpaced, presents nothing and drops the sound it renders.
+ * Asked once per VBlank on the emulation thread, never under netplay. */
+void psx_host_set_fast_forward_query(int (*query)(void));
+
+/* Asks the player for a disc image with the platform's file dialog, on a thread of its own so that the game keeps
+ * running behind it. 1 when the dialog opened, 0 when one is open already, none could be started or the platform has none. */
+int psx_host_pick_disc_image_begin(void);
+/* The dialog's answer, given once: 1 with the path in `out`, -1 when it closed without one or the path does not
+ * fit, 0 while it is open or none was begun. */
+int psx_host_pick_disc_image_poll(char *out, int size);
+
 /* UTF-8 path to the runtime's canonical user settings file.  The pointer is
  * process-owned and remains valid for the active runtime session.  This keeps
  * a game-owned UI on the same executable-relative settings.toml as the

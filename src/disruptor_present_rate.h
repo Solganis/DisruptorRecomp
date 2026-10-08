@@ -13,6 +13,12 @@ constexpr int disruptor_present_rate_top(double display_hz) {
     return display > kDisruptorPresentRateLeastTop ? display : kDisruptorPresentRateLeastTop;
 }
 
+/* A rate the host takes at start: 0 for the display's rate, or one inside the host's range. */
+constexpr bool disruptor_present_rate_accepted(int frames_per_second) {
+    return frames_per_second == 0 ||
+        (frames_per_second >= kDisruptorPresentRateLowest && frames_per_second <= kDisruptorPresentRateHighest);
+}
+
 /* What the control shows for the host's target: 0 there means "the display's rate". */
 constexpr int disruptor_present_rate_shown(int target_fps, int top) {
     if (target_fps <= 0 || target_fps > top) return top;

@@ -1,7 +1,11 @@
 #include "cpu_state.h"
+#include "gpu_temporal_sprite.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 #include <vector>
@@ -47,6 +51,7 @@ std::vector<Placed> g_places;
 std::uint32_t g_stack_x = 0;
 std::uint32_t g_stack_y = 0;
 int g_failures = 0;
+bool g_squash = true;
 
 struct Sized {
     std::uint32_t packet;
@@ -100,13 +105,15 @@ extern "C" void gpu_temporal_size_sprite(std::uint32_t packet, std::int32_t row,
     g_sizes.push_back({packet, row, width, height, shadow, whole});
 }
 
-/* Classic wide as the runtime does it: three quarters about column 160, rounded and unrounded. */
+/* Classic wide as the runtime does it: three quarters about column 160, rounded and unrounded. 4:3 without g_squash. */
 extern "C" int psx_ws_project_x(int x) {
+    if (!g_squash) return x;
     const int scaled = (x - 160) * 3;
     return 160 + (scaled + (scaled >= 0 ? 2 : -2)) / 4;
 }
 
 extern "C" std::int32_t psx_ws_project_x16(int x, std::int32_t fraction16) {
+    if (!g_squash) return x * 65536 + fraction16;
     return 160 * 65536 + static_cast<std::int32_t>((static_cast<std::int64_t>(x - 160) * 65536 + fraction16) * 3 / 4);
 }
 
@@ -253,6 +260,130 @@ void fourth_actor(CPUState &cpu, std::uint32_t kind, std::uint32_t frame, std::u
     cpu.gpr[19] = 55u;   /* (224 * 160 * 102) >> 16 */
 }
 
+constexpr std::uint32_t kKind = 0x80150000u;
+
+/* An effect of the third funnel: 401 units, a picture 38 x 21 over a reference 40 x 40, with what the game's two cuts leave of it. */
+void effect(CPUState &cpu, std::uint32_t which, bool mirrored, std::int32_t depth, std::int32_t x = 100, std::int32_t y = 37) {
+    g_memory.clear();
+    at_the_seam(cpu, kTestFunnels[2], x, y, depth);
+    cpu.gpr[19] = kActor;
+    cpu.gpr[20] = kPictures;
+    cpu.gpr[30] = 0xABCD00u | (mirrored ? 1u : 0u);
+    put(kStack + 0x28u, kKind, 4);
+    put(kActor + 0x1Du, which, 1);
+    put(kKind + 0x14u, which ? 9999u : 401u, 4);
+    put(kKind + 0x18u, which ? 401u : 9999u, 4);
+    put(kPictures + 8u, 38u | 21u << 8, 2);
+    put(kKind + which + 0x30u, 40u, 1);
+    put(kKind + which + 0x34u, 40u, 1);
+    const std::int32_t base = 160 * 401 / depth, wide = base * 38 / 40;
+    cpu.gpr[22] = static_cast<std::uint32_t>(mirrored ? -wide : wide);
+    cpu.gpr[18] = static_cast<std::uint32_t>(base * 21 / 40);
+}
+
+void run_effect(CPUState &cpu) {
+    run(cpu, kTestFunnels[2], kTestFunnels[2].packets[0]);
+}
+
+void test_an_effect_keeps_its_size_before_both_cuts() {
+    /* At depth 640 the base is 100.25 px: 95.2375 x 52.63125 exactly, 95 x 52 after the cuts. */
+    constexpr std::int32_t wide = 6241484, tall = 3449241;
+    for (const std::uint32_t which : {0u, 3u}) {
+        CPUState cpu = ready(kTestFunnels[2]);
+        effect(cpu, which, false, 640);
+        run_effect(cpu);
+        expect(sized_once(kRow, wide, tall, 0, 0), "an effect's size is its units over the depth times its picture over its reference");
+    }
+    CPUState cpu = ready(kTestFunnels[2]);
+    effect(cpu, 0u, true, 640);
+    run_effect(cpu);
+    expect(sized_once(kRow, wide + 2 * 65536, tall, 0, 0), "a mirrored effect's packet spans two columns more, and so does its size");
+    effect(cpu, 0u, true, 640);
+    cpu.gpr[22] = 95u;
+    run_effect(cpu);
+    expect(unsized(), "a width the game did not mirror is not a mirrored effect's");
+    effect(cpu, 0u, false, 640);
+    cpu.gpr[22] = 3u * 95u;
+    cpu.gpr[18] = 3u * 52u;
+    run_effect(cpu);
+    expect(unsized(), "an effect the game went on to grow threefold keeps its packet's size");
+    effect(cpu, 0u, false, 640);
+    ++cpu.gpr[18];
+    run_effect(cpu);
+    expect(unsized(), "nor is a height the steps do not end on handed over");
+    for (const std::uint32_t reference : {0x30u, 0x34u}) {
+        effect(cpu, 0u, false, 640);
+        put(kKind + reference, 0u, 1);
+        run_effect(cpu);
+        expect(unsized(), "an effect without a reference has no size");
+    }
+    effect(cpu, 0u, false, 640);
+    put(kKind + 0x14u, 0u, 4);
+    cpu.gpr[22] = cpu.gpr[18] = 0u;
+    run_effect(cpu);
+    expect(unsized(), "nor one without units");
+    effect(cpu, 0u, false, 640);
+    cpu.read_byte = nullptr;
+    run_effect(cpu);
+    expect(unsized(), "nor one that cannot be read");
+    cpu.read_byte = read_byte;
+    effect(cpu, 0u, false, 60);
+    run_effect(cpu);
+    expect(unsized(), "nor one with a side over 511 pixels");
+
+    effect(cpu, 0u, false, 640);
+    disruptor_sprite_depth_instruction_hook(&cpu, kTestFunnels[2].projection, kStoreWord, 1);
+    disruptor_sprite_depth_packet(&cpu, kTestFunnels[2].packets[1], kPacket);
+    expect(unsized(), "the funnel's second packet is another rectangle on the same point: it takes the place and no size");
+}
+
+/* Every effect at 4:3: the packet as the game centres it, the place, row and size as the module hands them, through the
+ * renderer's own arithmetic. The sides it returns must put the rectangle where the numbers before any cut say. */
+void test_the_renderer_takes_every_effect_size() {
+    constexpr std::array<std::array<std::int32_t, 2>, 2> points{{{100, 37}, {-77, -45}}};
+    int seen = 0, refused = 0, held = 0;
+    g_squash = false;
+    for (const bool mirrored : {false, true})
+        for (const auto &point : points)
+            for (std::int32_t depth = 140; depth <= 900; ++depth) {
+                CPUState cpu = ready(kTestFunnels[2]);
+                effect(cpu, 0u, mirrored, depth, point[0], point[1]);
+                const auto s6 = static_cast<std::int32_t>(cpu.gpr[22]), s2 = static_cast<std::int32_t>(cpu.gpr[18]);
+                run_effect(cpu);
+                ++seen;
+                if (g_sizes.size() != 1 || g_places.size() != 1) {
+                    ++refused;
+                    g_sizes.clear(); g_places.clear(); g_notes.clear();
+                    continue;
+                }
+                const Sized size = g_sizes[0];
+                const Placed place = g_places[0];
+                g_sizes.clear(); g_places.clear(); g_notes.clear();
+                /* 0x8003C628..0x8003C7D8: x0 = x - ($s6 >> 1), x1 = x0 + $s6 - 1, y0 = y - ($s2 >> 1), y2 = y0 + $s2 - 1. */
+                const int x0 = 160 + 160 * point[0] / depth - (s6 >> 1), x1 = x0 + s6 - 1;
+                const int y0 = 120 - 160 * point[1] / depth - (s2 >> 1), y2 = y0 + s2 - 1;
+                const int left = std::min(x0, x1), w = std::abs(x1 - x0), h = y2 - y0;
+                const GpuTemporalSprite sprite = gpu_temporal_sprite_from_fixed(1, 1, 0, 0, place.x, place.dy, size.row, size.width, size.height);
+                float sides[4];
+                gpu_temporal_sprite_sides(&sprite, static_cast<float>(left), static_cast<float>(y0), w, h, w + 1, h + 1, 1.0f, 0, sides);
+                const double cut_wide = std::abs(s6), exact_wide = 160.0 * 401.0 * 38.0 / (40.0 * depth);
+                const double wide = std::min(exact_wide, cut_wide + 1.5) + (mirrored ? 2.0 : 0.0) - 1.5;
+                const double tall = std::min(160.0 * 401.0 * 21.0 / (40.0 * depth), s2 + 1.5) - 1.5;
+                const double column = 160.0 + 160.0 * point[0] / depth - 0.25, row = 120.0 - 160.0 * point[1] / depth - 0.25;
+                const std::array<double, 4> wanted{column - wide / 2, row - tall / 2, column + wide / 2, row + tall / 2};
+                const std::array<double, 4> shown{left + sides[0], y0 + sides[1], left + w + sides[2], y0 + h + sides[3]};
+                bool right = true;
+                for (std::size_t side = 0; side < 4; ++side)
+                    right = right && std::isfinite(sides[side]) && std::fabs(shown[side] - wanted[side]) <= 0.003;
+                refused += !right;
+                held += exact_wide > cut_wide + 1.5;
+            }
+    g_squash = true;
+    expect(seen == 2 * 2 * 761 && refused == 0,
+           "the renderer puts every effect from depth 140 to 900 where its numbers before any cut say, mirrored or not");
+    expect(held > 0 && held * 5 < seen, "a side the two cuts left more than a pixel and a half behind is held there, and few are");
+}
+
 void test_a_sprite_keeps_its_size_before_the_cut() {
     {
         CPUState cpu = ready(kTestFunnels[0]);
@@ -277,13 +408,6 @@ void test_a_sprite_keeps_its_size_before_the_cut() {
         put(kActor + 8u, 24u | 48u << 8, 2);
         run(cpu, kTestFunnels[1], kTestFunnels[1].packets[0]);
         expect(sized_once(kRow, 6 * 65536, 12 * 65536, 0, 0), "the second funnel's size is two bytes of its definition");
-    }
-    {
-        CPUState cpu = ready(kTestFunnels[2]);
-        put(640u + 4u, 36u, 4);
-        put(640u + 8u, 52u, 4);
-        run(cpu, kTestFunnels[2], kTestFunnels[2].packets[0]);
-        expect(unsized(), "the third funnel's size is not read");
     }
     const TestFunnel &fourth = kTestFunnels[3];
     const auto deferred = [&fourth](CPUState &cpu) {
@@ -355,6 +479,8 @@ void test_a_projection_keeps_what_the_divisions_dropped();
 void test_sizes_run_after_places() {
     test_a_projection_keeps_what_the_divisions_dropped();
     test_a_sprite_keeps_its_size_before_the_cut();
+    test_an_effect_keeps_its_size_before_both_cuts();
+    test_the_renderer_takes_every_effect_size();
 }
 
 void test_a_projection_keeps_what_the_divisions_dropped() {
@@ -387,6 +513,16 @@ void test_a_projection_keeps_what_the_divisions_dropped() {
         disruptor_sprite_depth_instruction_hook(&cpu, funnel.projection, kStoreWord, 1);
         disruptor_sprite_depth_packet(&cpu, funnel.packets[0], kPacket);
         expect(g_places.empty() && noted_once(kPacket, 640 * kUnits), "a column too far out for 16.16 is not placed");
+        at_the_seam(cpu, funnel, 100, 37, 640);
+        cpu.gpr[4] = 1u;
+        disruptor_sprite_depth_instruction_hook(&cpu, funnel.projection, kStoreWord, 1);
+        disruptor_sprite_depth_packet(&cpu, funnel.packets[0], kPacket);
+        expect(g_places.empty() && noted_once(kPacket, 640 * kUnits), "a point the game goes on to warp keeps its depth and no place");
+        cpu.gpr[4] = 2u;
+        disruptor_sprite_depth_instruction_hook(&cpu, funnel.projection, kStoreWord, 1);
+        disruptor_sprite_depth_packet(&cpu, funnel.packets[0], kPacket);
+        expect(placed_once(kPacket, 11714560, funnel.packets[0] == 0x8003D488u ? 0 : -16384), "any other value of the switch leaves the point alone");
+        cpu.gpr[4] = 0u;
     }
     CPUState cpu{};
     at_the_seam(cpu, kTestFunnels[2], 100, 37, 640);

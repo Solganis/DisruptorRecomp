@@ -23,7 +23,7 @@ disc revision; the redistributable OpenBIOS backend is used for booting.
 - In-game settings for controls, display, fullscreen, VSync, volume, and mute.
 - Memory-card saves and twelve save-state slots.
 - Windows launcher with disc-image browsing, automatic copy/CUE setup,
-  full-disc SHA-256 verification, and game launch.
+  full-disc SHA-256 verification, the game's settings, and game launch.
 
 ## Play the Windows alpha
 
@@ -35,9 +35,13 @@ controls, saves, and troubleshooting.
 
 New builds include **DisruptorLauncher.exe**: browse to your own supported
 USA CUE/BIN (or an identical raw ISO/IMG), and it installs, verifies, and starts
-the game. Your original dump is kept. This launcher is not included in the
-already published alpha.2 ZIP. Cooked ISOs, PAL, and Japanese discs are not
-supported yet.
+the game. Your original dump is kept. The launcher also holds the game's
+settings, and it can take the game's language from a French, German or
+Japanese disc image that you add. This launcher is not included in the
+already published alpha.2 ZIP. Cooked ISOs are not supported, and a PAL or
+Japanese disc cannot be the game disc itself.
+
+<img width="680" alt="Disruptor Launcher" src="docs/images/launcher.png" />
 
 Join the [community Discord](https://discord.gg/aeTQjaQUr) to discuss the project
 and share feedback.

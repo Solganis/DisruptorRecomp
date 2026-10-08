@@ -31,6 +31,12 @@ set(DISRUPTOR_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_control_probe.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_far_rendering.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_frame_rate.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_intro_skip.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_language.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_language_disc.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_language_hints.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_language_source.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_restart.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_mouse_aim.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_render_arena.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_grown_quad.cpp"
@@ -125,6 +131,8 @@ target_compile_definitions(psx-runtime PRIVATE
     PSX_HAS_DISRUPTOR_BACKDROP_TILES=1
     PSX_HAS_DISRUPTOR_BILLBOARD_ASPECT=1
     PSX_HAS_DISRUPTOR_FAR_RENDERING=1
+    PSX_HAS_DISRUPTOR_INTRO_SKIP=1
+    PSX_HAS_DISRUPTOR_LANGUAGE=1
     PSX_HAS_DISRUPTOR_SPRITE_DEPTH=1
     PSX_HAS_DISRUPTOR_GROWN_QUAD=1
     PSX_HAS_DISRUPTOR_VERTICAL_CAMERA=1)
@@ -149,6 +157,15 @@ if(MSVC)
     set_property(SOURCE "${PSXRECOMP_ROOT}/runtime/src/audio_trace.c"
         APPEND PROPERTY COMPILE_OPTIONS
         "/std:c11" "/experimental:c11atomics")
+endif()
+
+if(WIN32)
+    # UTF-8 as the game's code page: a path in settings.toml may hold letters the system's own page lacks.
+    if(MINGW)
+        target_sources(psx-runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor.rc")
+    else()
+        target_sources(psx-runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor.manifest")
+    endif()
 endif()
 
 include(CTest)
@@ -220,6 +237,21 @@ if(BUILD_TESTING)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_grown_quad_contract.py"
             --require-artifacts)
 
+    add_test(NAME disruptor_intro_skip_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_intro_skip_contract.py"
+            --require-artifacts)
+
+    add_test(NAME disruptor_language_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_language_contract.py"
+            --require-artifacts)
+
+    add_test(NAME disruptor_language_disc_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_language_disc_contract.py"
+            --require-artifacts)
+
     add_test(NAME disruptor_frame_rate_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_frame_rate_contract.py"
@@ -228,6 +260,10 @@ if(BUILD_TESTING)
     add_test(NAME disruptor_billboard_aspect_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_billboard_aspect_contract.py")
+
+    add_test(NAME disruptor_launcher_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_launcher_contract.py")
 
     add_test(NAME disruptor_framework_overlay_new_file
         COMMAND "${Python3_EXECUTABLE}" -B
@@ -316,6 +352,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME disruptor_gpu_ws_hud_widget
         COMMAND disruptor-gpu-ws-hud-widget-test)
 
+    add_executable(disruptor-intro-skip-test
+        tests/disruptor_intro_skip_test.cpp)
+    target_include_directories(disruptor-intro-skip-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-intro-skip-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_intro_skip
+        COMMAND disruptor-intro-skip-test)
+
     add_executable(disruptor-frame-rate-test
         tests/disruptor_frame_rate_test.cpp)
     target_include_directories(disruptor-frame-rate-test PRIVATE
@@ -323,6 +367,54 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_compile_features(disruptor-frame-rate-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_frame_rate
         COMMAND disruptor-frame-rate-test)
+
+    add_executable(disruptor-language-test
+        tests/disruptor_language_test.cpp)
+    target_include_directories(disruptor-language-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-language-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_language
+        COMMAND disruptor-language-test)
+
+    add_executable(disruptor-language-hints-test
+        tests/disruptor_language_hints_test.cpp)
+    target_include_directories(disruptor-language-hints-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-language-hints-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_language_hints
+        COMMAND disruptor-language-hints-test)
+
+    add_executable(disruptor-language-disc-test
+        tests/disruptor_language_disc_test.cpp)
+    target_compile_features(disruptor-language-disc-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_language_disc
+        COMMAND disruptor-language-disc-test)
+
+    add_executable(disruptor-language-overlay-test
+        tests/disruptor_language_overlay_test.cpp)
+    target_include_directories(disruptor-language-overlay-test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp-overlay/runtime/include"
+        "${PSXRECOMP_ROOT}/runtime/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_features(disruptor-language-overlay-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_language_overlay
+        COMMAND disruptor-language-overlay-test)
+    add_test(NAME disruptor_language_overlay_tall
+        COMMAND disruptor-language-overlay-test tall)
+
+    add_executable(host-pick-slot-test
+        tests/host_pick_slot_test.cpp)
+    target_compile_features(host-pick-slot-test PRIVATE cxx_std_20)
+    add_test(NAME host_pick_slot
+        COMMAND host-pick-slot-test)
+
+    add_executable(disruptor-restart-test
+        tests/disruptor_restart_test.cpp)
+    target_include_directories(disruptor-restart-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-restart-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_restart
+        COMMAND disruptor-restart-test run "${CMAKE_CURRENT_BINARY_DIR}/disruptor_restart_test.txt")
 
     add_executable(disruptor-present-rate-test
         tests/disruptor_present_rate_test.cpp)

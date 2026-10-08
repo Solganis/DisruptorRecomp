@@ -17,8 +17,9 @@ and share feedback.
 3. On Windows 10 or 11 x64, install the latest
    [Microsoft Visual C++ x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe)
    if it is not already installed. The GPU driver must support OpenGL 3.3.
-4. Double-click **DisruptorLauncher.exe**, select **Browse disc image...**,
-   and locate your USA **MODE2/2352** CUE or BIN. Keep a selected CUE beside
+4. Double-click **DisruptorLauncher.exe**, select **Browse...** in the
+   **Disc** row, and locate your USA **MODE2/2352** CUE or BIN. Dropping the
+   image on the launcher window does the same. Keep a selected CUE beside
    the BIN it references. Filenames do not need to match the package's names.
    A raw image named `.iso` or `.img` is also accepted if its complete bytes
    match the supported dump. A cooked 2048-byte ISO cannot be used.
@@ -30,8 +31,16 @@ and share feedback.
 6. At the game menu, use the arrow keys and **Enter** to select **New Game**,
    or choose **Practice Mode** to try a training mission.
 
-OpenBIOS is included. PAL and Japanese discs are not supported. Keep the raw
-BIN/CUE format; do not convert the disc to a cooked ISO.
+The launcher's **Display**, **Enhancements**, **Controls** and **Audio** tabs
+hold the settings of the in-game menu. A change is saved to `settings.toml`
+at once and applies the next time the game starts. **Original** and
+**Enhanced** set a group of them in one step, and **Reset settings** returns
+them to those of a new installation. The tabs are locked while the game runs.
+If the game stops with an error, the launcher shows the end of `startup.log`.
+
+OpenBIOS is included. A PAL or Japanese disc cannot be the game disc, but it
+can give the game its language: see [Other languages](#other-languages). Keep
+the raw BIN/CUE format; do not convert the disc to a cooked ISO.
 
 Older releases without `DisruptorLauncher.exe` use manual setup: copy the BIN
 and CUE into `input/`, name the CUE `Disruptor (USA).cue`, and run
@@ -55,6 +64,7 @@ folder; these backups can be removed manually once the repaired copy works.
 | Map / pause | Tab / P |
 | Settings | Backquote (`` ` ``); Escape closes |
 | Fullscreen | Alt+Enter |
+| Fast-forward | Hold ] |
 | Save / load state | Shift+F1–F12 / F1–F12 |
 
 Modern mouse/keyboard controls, geometry correction, and perspective textures
@@ -71,6 +81,33 @@ leaves the weapon size unchanged.
 The default is 4x at 4:3; lower the scale if performance is poor. Menus and
 movies remain at 4:3. Controls, display, and audio preferences are saved in
 `settings.toml` beside the executable.
+
+## Other languages
+
+The game can take its language from a second disc image that you own. In the
+launcher, press **Add disc...** in the **Language** row, or drop the image on
+the window, and pick the image of the French, German or Japanese release. The
+launcher checks that it fits your US disc and then uses it where it is. It is
+not copied, so keep it there. The **Language** list keeps every disc you have
+added: choose one of them or **English** before **Play game**. **Remove**
+takes a disc off the list and leaves the file alone. The US disc is still
+required and stays the game disc.
+
+The same choice is in the game: open **Settings → System**, press **Choose a
+disc image**, then press **Restart now**. **English** there removes the
+second disc again.
+
+The French and German discs give their movies, speech, menus, messages and
+the hints shown while a mission reloads. The Japanese disc gives its movies,
+speech and hints. Its menus are in English on that disc as well. A few long
+French and German menu lines are shortened to fit the screen.
+
+Save states belong to the language they were made in. With a language disc
+the twelve slots are kept in a folder of their own, `saves/German` for the
+German disc, so the slots start empty after a change of language and the
+earlier ones are back when you return to it. A state holds what the game has
+read of its disc, and the discs are not cut alike. Memory card saves do not
+depend on the language.
 
 ## Saves and updates
 

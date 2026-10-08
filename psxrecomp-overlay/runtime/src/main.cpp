@@ -42,6 +42,7 @@ extern "C" void psx_event_step_conservative_env_init(void);
 #include "gpu_render.h"
 #include "gpu_gl_renderer.h"
 #include "gpu_vk_renderer.h"
+#include "host_pick_slot.h"
 #include "host_ui.h"
 extern "C" void gl_renderer_geometry_interpolation_diag(uint64_t out[6]);
 #include "gte_precision.h"
@@ -71,6 +72,10 @@ extern "C" void gl_renderer_geometry_interpolation_diag(uint64_t out[6]);
 #include "mod_runtime.h"
 #ifdef PSX_HAS_DISRUPTOR_FAR_RENDERING
 extern "C" void disruptor_far_rendering_abandon_metrics(void);
+#ifdef PSX_HAS_DISRUPTOR_LANGUAGE
+extern "C" void disruptor_language_set_disc(const char* path);
+extern "C" void disruptor_language_settle(void);
+#endif
 #endif
 #include "dirty_ram_interp.h"
 #include "crc32.h"
@@ -100,6 +105,9 @@ extern "C" void disruptor_far_rendering_abandon_metrics(void);
 #endif
 #include <algorithm>
 #include <atomic>
+#include <mutex>
+#include <system_error>
+#include <thread>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -125,7 +133,7 @@ extern "C" void gl_renderer_set_host_ui_suspended(int suspended);
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include <windows.h>
-#include <commdlg.h>
+#include <shobjidl.h>
 #else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -585,6 +593,12 @@ extern "C" uint32_t psx_host_ui_capture_flags(void) {
     if (!state.session_live || !state.registered || !state.hooks.flags)
         return 0;
     return state.hooks.flags(state.hooks.userdata);
+}
+
+static int (*g_fast_forward_query)(void) = nullptr;
+
+extern "C" void psx_host_set_fast_forward_query(int (*query)(void)) {
+    g_fast_forward_query = query;
 }
 
 extern "C" int psx_host_ui_game_input_captured(void) {
@@ -1870,22 +1884,40 @@ static bool pick_runtime_file(const char* title, const char* filter,
         return false;
     }
 #ifdef _WIN32
-    char path_buf[4096];
-    std::memset(path_buf, 0, sizeof(path_buf));
+    /* IFileOpenDialog, not GetOpenFileName: that one moves the process's working directory into every folder the
+     * player opens (measured, OFN_NOCHANGEDIR or not), and the freeze heartbeat writes its files there. */
+    const auto wide = [](const char* text) {
+        std::wstring out(static_cast<size_t>(MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0)), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, text, -1, out.data(), static_cast<int>(out.size()));
+        return out;
+    };
+    std::vector<std::wstring> texts;
+    for (const char* at = filter; at && *at; at += std::strlen(at) + 1) texts.push_back(wide(at));
+    std::vector<COMDLG_FILTERSPEC> kinds;
+    for (size_t pair = 0; pair + 1 < texts.size(); pair += 2) kinds.push_back({texts[pair].c_str(), texts[pair + 1].c_str()});
 
-    OPENFILENAMEA ofn;
-    std::memset(&ofn, 0, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = filter;
-    ofn.lpstrFile = path_buf;
-    ofn.nMaxFile = (DWORD)sizeof(path_buf);
-    ofn.lpstrTitle = title;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
-
-    if (!GetOpenFileNameA(&ofn)) return false;
-    out = path_buf;
-    return true;
+    const HRESULT initialised = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    IFileOpenDialog* dialog = nullptr;
+    bool chosen = false;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
+        DWORD options = 0;
+        dialog->GetOptions(&options);
+        dialog->SetOptions(options | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR);
+        if (!kinds.empty()) dialog->SetFileTypes(static_cast<UINT>(kinds.size()), kinds.data());
+        dialog->SetTitle(wide(title).c_str());
+        IShellItem* item = nullptr;
+        wchar_t* path = nullptr;
+        if (SUCCEEDED(dialog->Show(nullptr)) && SUCCEEDED(dialog->GetResult(&item)) &&
+            SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+            out = path;
+            chosen = true;
+        }
+        CoTaskMemFree(path);
+        if (item) item->Release();
+        dialog->Release();
+    }
+    if (SUCCEEDED(initialised)) CoUninitialize();
+    return chosen;
 #else
     (void)filter;
     (void)out;
@@ -1901,6 +1933,46 @@ static bool pick_runtime_file(const char* title, const char* filter,
         title, cli_flag);
     return false;
 #endif
+}
+
+/* The dialog runs on a thread of its own: on the game's thread it would stop the frames, and the freeze watchdog
+ * takes two seconds without a frame for a hang and writes a dump. */
+/* Never destroyed: the dialog's thread may still be in the dialog when the program ends. */
+static PsxHostPickSlot& s_disc_pick = *new PsxHostPickSlot;
+static std::thread& s_disc_worker = *new std::thread;
+
+extern "C" int psx_host_pick_disc_image_begin(void) {
+#ifdef _WIN32
+    if (g_headless || !s_disc_pick.open()) return 0;
+    try {
+        /* The worker before this one closed its pick as its last act, and no pick opens before that one is taken. */
+        if (s_disc_worker.joinable()) s_disc_worker.join();
+        s_disc_worker = std::thread([] {
+            std::string path;
+            try {
+                std::filesystem::path picked;
+                if (pick_runtime_file("Select a disc image",
+                                      "Disc image (*.cue;*.bin;*.chd;*.iso)\0*.cue;*.bin;*.chd;*.iso\0All files\0*.*\0",
+                                      picked, "--disc"))
+                    path = picked.string();
+            } catch (...) {
+                std::fprintf(stderr, "psxrecomp: the chosen disc image could not be taken, its path may have letters this system's code page lacks\n");
+                path.clear();
+            }
+            s_disc_pick.close(std::move(path));
+        });
+    } catch (const std::system_error&) {
+        s_disc_pick.abandon();
+        return 0;
+    }
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+extern "C" int psx_host_pick_disc_image_poll(char* out, int size) {
+    return s_disc_pick.take(out, size);
 }
 
 static std::string uppercase_ascii(std::string s) {
@@ -4648,16 +4720,20 @@ static void sdl_vblank_present(void) {
         }
     }
 
+    const bool module_fast_forward = g_fast_forward_query &&
+        !psx_netplay_active() && g_fast_forward_query() != 0;
+
 #ifndef PSX_SDL_NO_AUDIO
     /* Optional turbo host sink advances the canonical SPU on the exact guest
      * sample budget but drops accelerated output before SDL. This is distinct
      * from the old mute/freeze model: voice and CD state never pause. FMV skip
      * retains the hard mute because it deliberately fast-forwards a movie. */
     sdl_audio_update(fmv_skip_active,
-                     turbo_loads_active && g_turbo_audio_sink_enabled);
+                     module_fast_forward ||
+                     (turbo_loads_active && g_turbo_audio_sink_enabled));
 #endif
 
-    if (g_headless) {
+    if (g_headless || module_fast_forward) {
         netplay_tail.skip_pace();
         return;
     }
@@ -4672,7 +4748,7 @@ static void sdl_vblank_present(void) {
     }
 #endif
 
-    /* Turbo mode: while TAB is held, skip both VRAM->ARGB conversion and
+    /* Turbo mode: while ] is held, skip both VRAM->ARGB conversion and
      * SDL_RenderPresent. The recompiled BIOS still advances simulated
      * cycles every vblank, so the BIOS proceeds at whatever rate the host
      * CPU sustains without graphics-driver vsync overhead. Present once
@@ -4682,7 +4758,7 @@ static void sdl_vblank_present(void) {
         static int turbo_skip = 0;
         const int TURBO_PRESENT_EVERY = 30;
         if (!(psx_host_ui_capture_flags() & PSX_HOST_UI_CAPTURE_KEYBOARD) &&
-            keys[SDL_SCANCODE_TAB]) {
+            keys[SDL_SCANCODE_RIGHTBRACKET]) {
             turbo_skip = (turbo_skip + 1) % TURBO_PRESENT_EVERY;
             if (turbo_skip != 0) {
                 netplay_tail.skip_pace();
@@ -6538,6 +6614,17 @@ int main(int argc, char** argv) {
          * Config + env own it until a launcher toggle exists; if one is
          * added, restore this line together with the UI. The seed write
          * below still persists the effective value for inspection. */
+#ifdef PSX_HAS_DISRUPTOR_INTRO_SKIP
+        /* Disruptor's intro switch has a control and covers the BIOS animation too. */
+        if (us.has_skip_intro && us.skip_intro &&
+            !std::getenv("PSX_DISRUPTOR_SKIP_INTRO"))
+            fast_boot = true;
+#endif
+#ifdef PSX_HAS_DISRUPTOR_LANGUAGE
+        /* Named before the drive first reads the game disc. */
+        if (us.has_language_disc && !std::getenv("PSX_DISRUPTOR_LANGUAGE_DISC"))
+            disruptor_language_set_disc(us.language_disc.c_str());
+#endif
         if (us.has_bios_hle)       bios_hle_requested = us.bios_hle;
         if (us.has_fullscreen)     g_fullscreen      = us.fullscreen;
         if (us.has_aspect_ratio) {
@@ -6756,7 +6843,7 @@ int main(int argc, char** argv) {
         g_frame_interpolation = atoi(e) ? 1 : 0;
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_FPS")) {
         int fps = atoi(e);
-        if (fps == 0 || fps >= 30) g_frame_interpolation_fps = fps;
+        if (fps == 0 || (fps >= 30 && fps <= 1000)) g_frame_interpolation_fps = fps;
     }
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_BLEND")) {
         if (strcmp(e, "geometry") == 0 || strcmp(e, "2") == 0) {
@@ -8027,6 +8114,10 @@ session_reboot:
             bios_hle_requested = (e[0] && e[0] != '0');
         if (const char* e = std::getenv("PSX_BIOS_HLE_KEEP_INTRO"))
             bios_hle_keep_intro = (e[0] && e[0] != '0');
+#ifdef PSX_HAS_DISRUPTOR_INTRO_SKIP
+        if (const char* e = std::getenv("PSX_DISRUPTOR_SKIP_INTRO"))
+            if (e[0] && e[0] != '0') fast_boot = true;
+#endif
 
         PsxBiosHleRequest req;
         req.bios_hle               = bios_hle_requested ? 1 : 0;
@@ -8077,6 +8168,10 @@ session_reboot:
     if (game_entry_pc != 0) {
         savestate_configure(memcard_dir.string().c_str(),
                             memory_get_bios_checksum(), game_entry_pc);
+#ifdef PSX_HAS_DISRUPTOR_LANGUAGE
+        /* Before any state can be asked for: a language disc's states have a folder of their own. */
+        disruptor_language_settle();
+#endif
         /* Headless / agent load: PSX_LOAD_SLOT=N stages F1..F12 load (0..11)
          * at the next safe block boundary after boot. */
         if (const char *ls = std::getenv("PSX_LOAD_SLOT")) {

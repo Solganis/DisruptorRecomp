@@ -1618,6 +1618,17 @@ static int disruptor_billboard_aspect_site(uint32_t pc, uint32_t insn) {
 }
 #endif
 
+#ifdef PSX_HAS_DISRUPTOR_INTRO_SKIP
+extern void disruptor_intro_skip_instruction_hook(
+    CPUState *cpu, uint32_t address, uint32_t instruction, int phase);
+
+static int disruptor_intro_skip_site(uint32_t pc, uint32_t insn) {
+    return (pc == 0x800147B0u && insn == 0x2A820003u) ||
+           (pc == 0x80020A80u && insn == 0x2A02005Eu) ||
+           (pc == 0x80048678u && insn == 0x30420940u);
+}
+#endif
+
 #ifdef PSX_HAS_DISRUPTOR_SPRITE_DEPTH
 extern void disruptor_sprite_depth_instruction_hook(
     CPUState *cpu, uint32_t address, uint32_t instruction, int phase);
@@ -1724,6 +1735,12 @@ static int exec_one_fetched(CPUState *cpu, uint32_t pc, uint32_t insn,
 #ifdef PSX_HAS_DISRUPTOR_BILLBOARD_ASPECT
     if (disruptor_billboard_aspect_site(pc, insn)) {
         disruptor_billboard_aspect_instruction_hook(cpu, pc, insn, 1);
+    }
+#endif
+
+#ifdef PSX_HAS_DISRUPTOR_INTRO_SKIP
+    if (disruptor_intro_skip_site(pc, insn)) {
+        disruptor_intro_skip_instruction_hook(cpu, pc, insn, 1);
     }
 #endif
 

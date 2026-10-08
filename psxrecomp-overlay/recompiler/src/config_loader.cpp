@@ -2231,7 +2231,8 @@ UserSettings load_user_settings(const fs::path& path) {
         });
         if (v.contains("frame_interpolation_fps")) try_get([&]{
             s.frame_interpolation_fps = toml::find<int>(v, "frame_interpolation_fps");
-            if (s.frame_interpolation_fps == 0 || s.frame_interpolation_fps >= 30)
+            if (s.frame_interpolation_fps == 0 ||
+                (s.frame_interpolation_fps >= 30 && s.frame_interpolation_fps <= 1000))
                 s.has_frame_interpolation_fps = true;
         });
         if (v.contains("frame_interpolation_blend")) try_get([&]{
@@ -2456,6 +2457,18 @@ UserSettings load_user_settings(const fs::path& path) {
             s.frame_unlock = toml::find<bool>(d, "frame_unlock");
             s.has_frame_unlock = true;
         });
+        if (d.contains("skip_intro")) try_get([&]{
+            s.skip_intro = toml::find<bool>(d, "skip_intro");
+            s.has_skip_intro = true;
+        });
+        if (d.contains("language_disc")) try_get([&]{
+            s.language_disc = toml::find<std::string>(d, "language_disc");
+            s.has_language_disc = true;
+        });
+        if (d.contains("language_discs")) try_get([&]{
+            s.language_discs = toml::find<std::vector<std::string>>(d, "language_discs");
+            s.has_language_discs = true;
+        });
         if (d.contains("hud_scale")) try_get([&]{
             const int percent = toml::find<int>(d, "hud_scale");
             if (percent >= 50 && percent <= 100) {
@@ -2519,6 +2532,20 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
     auto fwd = [](const fs::path& p) {
         std::string str = p.generic_string();
         return str;
+    };
+
+    // A TOML basic string: a quote, a backslash and a control character are escaped.
+    auto quoted = [](const std::string& text) {
+        std::string out = "\"";
+        for (const char letter : text) {
+            const unsigned code = static_cast<unsigned char>(letter);
+            char escape[8];
+            if (letter == '\\' || letter == '"') std::snprintf(escape, sizeof(escape), "\\%c", letter);
+            else if (code < 0x20 || code == 0x7F) std::snprintf(escape, sizeof(escape), "\\u%04X", code);
+            else std::snprintf(escape, sizeof(escape), "%c", letter);
+            out += escape;
+        }
+        return out + "\"";
     };
 
     f << "# psxrecomp user settings - written by settings UIs. Safe to hand-edit.\n";
@@ -2642,6 +2669,8 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
         s.has_invert_vertical ||
         s.has_high_precision_camera || s.has_geometry_correction ||
         s.has_perspective_textures || s.has_frame_unlock || s.has_improved_shadows ||
+        s.has_language_discs ||
+        s.has_language_disc || s.has_skip_intro ||
         s.has_hud_scale) {
         f << "\n[disruptor]\n";
         if (s.has_mouse_aim)
@@ -2678,6 +2707,16 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
             f << "perspective_textures = " << (s.perspective_textures ? "true" : "false") << "\n";
         if (s.has_frame_unlock)
             f << "frame_unlock = " << (s.frame_unlock ? "true" : "false") << "\n";
+        if (s.has_skip_intro)
+            f << "skip_intro = " << (s.skip_intro ? "true" : "false") << "\n";
+        if (s.has_language_disc)
+            f << "language_disc = " << quoted(s.language_disc) << "\n";
+        if (s.has_language_discs) {
+            f << "language_discs = [";
+            for (size_t index = 0; index < s.language_discs.size(); ++index)
+                f << (index ? ", " : "") << quoted(s.language_discs[index]);
+            f << "]\n";
+        }
         if (s.has_hud_scale && s.hud_scale >= 50 && s.hud_scale <= 100)
             f << "hud_scale = " << s.hud_scale << "\n";
         if (s.has_improved_shadows)

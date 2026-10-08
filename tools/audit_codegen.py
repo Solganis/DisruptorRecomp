@@ -205,6 +205,12 @@ SPRITE_DEPTH_SITES = {
     0x8003D1B4: 0xA4379EA0,
 }
 
+INTRO_SKIP_SITES = {
+    0x800147B0: 0x2A820003,
+    0x80020A80: 0x2A02005E,
+    0x80048678: 0x30420940,
+}
+
 BILLBOARD_ASPECT_SITES = {
     0x8003BB88: 0xA6030016,
     0x8003BFB0: 0xA6030016,
@@ -583,6 +589,24 @@ def main() -> int:
                 "cpu->gpr[12] = -256;  /* 0x800479C4: 0x200CFF00 */", "cpu->gpr[12] = 496;  /* 0x800479E0: 0x200C01F0 */"):
         if shard_text.count(pin) != 1:
             failures.append("the guard band before the 0x80047A0C scratch store changed: " + pin)
+
+    intro_skip_matches = re.findall(
+        r"disruptor_intro_skip_instruction_hook\(cpu, "
+        r"0x([0-9A-F]{8})u, 0x([0-9A-F]{8})u, 1\)",
+        shard_text,
+    )
+    generated_intro_skip_sites = {
+        int(address, 16): int(word, 16)
+        for address, word in intro_skip_matches
+    }
+    if (generated_intro_skip_sites != INTRO_SKIP_SITES or
+            len(intro_skip_matches) != len(INTRO_SKIP_SITES)):
+        failures.append(
+            "reviewed intro-skip hooks differ: expected "
+            + str(INTRO_SKIP_SITES)
+            + ", found "
+            + str(generated_intro_skip_sites)
+        )
 
     precision_mfc2_matches = re.findall(
         r"gte_precision_mfc2_pc_read\(0x([0-9A-F]{8})u, "

@@ -132,6 +132,12 @@ void test_the_control_hands_over_what_the_user_chose() {
     expect(g_slider.text.find("PSX_FRAME_INTERPOLATION_FPS of the launcher replaces it") != std::string::npos &&
                g_slider.text.find("not known") == std::string::npos,
            "with the launcher's override set it says the override wins at the next start");
+    for (const char *refused : {"29", "1001", "-5"}) {
+        launcher_override(refused);
+        (void)disruptor_present_rate_control(&accepted);
+        expect(g_slider.text.find("launcher") == std::string::npos,
+               "a launcher rate the start refuses is not announced as replacing the saved one");
+    }
     launcher_override("");
     g_host.display_hz = 1000.6;
     (void)disruptor_present_rate_control(&accepted);
@@ -252,6 +258,10 @@ int main() {
            "a target under the range is shown at its lower end");
     expect(disruptor_present_rate_shown(271, 270) == 270 && disruptor_present_rate_shown(144, 120) == 120,
            "a target over the display's rate is shown at the top");
+    expect(disruptor_present_rate_accepted(0) && disruptor_present_rate_accepted(30) &&
+               disruptor_present_rate_accepted(1000) && !disruptor_present_rate_accepted(-1) &&
+               !disruptor_present_rate_accepted(29) && !disruptor_present_rate_accepted(1001),
+           "the start takes 0 or a rate from 30 to 1000");
     expect(kDisruptorPresentRateLowest == 30 && kDisruptorPresentRateLeastTop == 120,
            "the range starts at the retail 30 and reaches at least 120");
 

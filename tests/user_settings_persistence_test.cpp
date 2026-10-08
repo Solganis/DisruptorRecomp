@@ -79,6 +79,14 @@ int main() {
         written.perspective_textures = true;
         written.has_frame_unlock = true;
         written.frame_unlock = true;
+        written.has_skip_intro = true;
+        written.skip_intro = true;
+        written.has_language_disc = true;
+        written.language_disc = "C:\\Games \"old\"\\Disruptor (France).cue";
+        written.has_language_discs = true;
+        written.language_discs = {"C:\\Games \"old\"\\Disruptor (France).cue",
+                                  "D:\\\xD0\x94\xD0\xB8\xD1\x81\xD0\xBA\xD0\xB8\\Disruptor (Germany).cue",
+                                  "a line\nbreak, a tab\t and \x7F from a hand edit"};
         written.has_hud_scale = true;
         written.hud_scale = 70;
         written.has_improved_shadows = true;
@@ -127,6 +135,9 @@ int main() {
                     loaded.has_perspective_textures &&
                     loaded.perspective_textures &&
                     loaded.has_frame_unlock && loaded.frame_unlock &&
+                    loaded.has_skip_intro && loaded.skip_intro &&
+                    loaded.has_language_disc && loaded.language_disc == "C:\\Games \"old\"\\Disruptor (France).cue" &&
+                    loaded.has_language_discs && loaded.language_discs == written.language_discs &&
                     loaded.has_hud_scale && loaded.hud_scale == 70 &&
                     loaded.has_improved_shadows && loaded.improved_shadows,
                 "Disruptor preferences did not round-trip");
@@ -220,7 +231,7 @@ int main() {
                     "invalid interpolation mode was saved");
         }
 
-        for (const int rate : {0, 30, 45, 120}) {
+        for (const int rate : {0, 30, 45, 120, 1000}) {
             UserSettings preference;
             preference.has_frame_interpolation_fps = true;
             preference.frame_interpolation_fps = rate;
@@ -230,14 +241,14 @@ int main() {
             require(roundtrip.has_frame_interpolation_fps && roundtrip.frame_interpolation_fps == rate,
                     "an in-between frame rate from 30 FPS, or 0 for the display, did not round-trip");
         }
-        for (const int rate : {-1, 1, 29}) {
+        for (const int rate : {-1, 1, 29, 1001}) {
             {
                 std::ofstream out(interpolation, std::ios::trunc);
                 out << "[video]\nframe_interpolation_fps = " << rate << "\n";
             }
             const UserSettings rejected = PSXRecompV4::load_user_settings(interpolation);
             require(!rejected.parse_error && !rejected.has_frame_interpolation_fps,
-                    "an in-between frame rate under 30 FPS was accepted on load");
+                    "an in-between frame rate outside 30 to 1000 FPS was accepted on load");
         }
 
         const fs::path invalid = root / "invalid.toml";
