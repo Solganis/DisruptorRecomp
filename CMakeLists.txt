@@ -34,6 +34,7 @@ set(DISRUPTOR_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_mouse_aim.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_render_arena.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_grown_quad.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_hud_widgets.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_sprite_depth.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_vertical_camera.cpp")
 
@@ -162,6 +163,10 @@ if(BUILD_TESTING)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backdrop_tiles_contract.py"
             --require-artifacts)
 
+    add_test(NAME disruptor_depth24_sync_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_depth24_sync_contract.py")
+
     add_test(NAME disruptor_geometry_provenance_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_geometry_provenance_contract.py")
@@ -173,6 +178,10 @@ if(BUILD_TESTING)
     add_test(NAME disruptor_perspective_texture_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_perspective_texture_contract.py")
+
+    add_test(NAME disruptor_pinned_corner_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pinned_corner_contract.py")
 
     add_test(NAME disruptor_dev_menu_contract
         COMMAND "${Python3_EXECUTABLE}" -B
@@ -190,6 +199,10 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_far_rendering_contract.py")
 
+    add_test(NAME disruptor_frame_kind_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_frame_kind_contract.py")
+
     add_test(NAME disruptor_temporal_presenter_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_temporal_presenter_contract.py")
@@ -197,6 +210,10 @@ if(BUILD_TESTING)
     add_test(NAME disruptor_hud_scale_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hud_scale_contract.py")
+
+    add_test(NAME disruptor_hud_widget_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hud_widget_contract.py")
 
     add_test(NAME disruptor_grown_quad_contract
         COMMAND "${Python3_EXECUTABLE}" -B
@@ -275,6 +292,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME disruptor_backdrop_tiles
         COMMAND disruptor-backdrop-tiles-test)
 
+    add_executable(disruptor-gpu-ws-frame-kind-test
+        tests/gpu_ws_frame_kind_test.cpp)
+    target_include_directories(disruptor-gpu-ws-frame-kind-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-ws-frame-kind-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_gpu_ws_frame_kind
+        COMMAND disruptor-gpu-ws-frame-kind-test)
+
     add_executable(disruptor-gpu-ws-hud-scale-test
         tests/gpu_ws_hud_scale_test.cpp)
     target_include_directories(disruptor-gpu-ws-hud-scale-test PRIVATE
@@ -282,6 +307,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_compile_features(disruptor-gpu-ws-hud-scale-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_gpu_ws_hud_scale
         COMMAND disruptor-gpu-ws-hud-scale-test)
+
+    add_executable(disruptor-gpu-ws-hud-widget-test
+        tests/gpu_ws_hud_widget_test.cpp)
+    target_include_directories(disruptor-gpu-ws-hud-widget-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-ws-hud-widget-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_gpu_ws_hud_widget
+        COMMAND disruptor-gpu-ws-hud-widget-test)
 
     add_executable(disruptor-frame-rate-test
         tests/disruptor_frame_rate_test.cpp)
@@ -350,6 +383,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_compile_features(disruptor-gpu-temporal-mesh-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_gpu_temporal_mesh
         COMMAND disruptor-gpu-temporal-mesh-test)
+
+    add_executable(disruptor-gpu-pinned-corner-test
+        tests/gpu_pinned_corner_test.cpp)
+    target_include_directories(disruptor-gpu-pinned-corner-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-pinned-corner-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_gpu_pinned_corner
+        COMMAND disruptor-gpu-pinned-corner-test)
 
     add_executable(disruptor-presentation-yaw-math-test
         tests/presentation_yaw_math_test.cpp)

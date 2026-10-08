@@ -287,8 +287,10 @@ def main() -> int:
             "temporal metadata must remain an optional presentation callback")
     precise = function_body(gpu, "resolve_precise_vertices")
     queue_precise = function_body(gpu, "queue_precise_triangle")
-    require("s_precise_vertex_depth[i] = z[i]" in precise and
-            "gr_set_temporal_depth_triangle(1," in queue_precise and
+    require(precise.count("s_precise_vertex_depth[i] = psx_pinned_corner_depth(unpin, pinned[i], z[i]);") == 2 and
+            "s_precise_vertex_depth[i] = z[i]" not in precise and
+            "gr_set_temporal_depth_triangle(psx_pinned_depth_mode(s_precise_vertex_depth[a], s_precise_vertex_depth[b], "
+            "s_precise_vertex_depth[c])," in queue_precise and
             "s_texture_correction_enabled" not in queue_precise,
             "temporal depth must use exact GTE depth independently of texture correction")
     consume = function_body(gl, "take_visual_triangle")

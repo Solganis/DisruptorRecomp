@@ -378,6 +378,8 @@ static int           s_geometry_correction = 0;
 static int           s_next_world = 0;
 static int           s_next_precise = 0;
 static int32_t       s_next_x16[3], s_next_y16[3];
+static int           s_next_unpinned = 0;
+static int32_t       s_next_unpinned_x16[3], s_next_unpinned_y16[3];
 static int           s_next_perspective = 0;
 static float         s_next_q[3] = { 0.0f, 0.0f, 0.0f };
 static int           s_next_temporal_depth = 0;
@@ -580,11 +582,15 @@ static int take_visual_triangle(const int *xs, const int *ys,
     const int exact = world && s_next_precise;
     const int perspective = exact && s_next_perspective;
     const int partial = !exact && s_next_temporal_depth == 2;
+    const int unpinned = !exact && s_geometry_correction && s_next_unpinned;
     const int sprite = !world && s_geometry_correction && s_sprite_depth > 0.0f;
     for (int i = 0; i < 3; ++i) {
         if (exact) {
             px[i] = (float)((double)s_next_x16[i] / 65536.0);
             py[i] = (float)((double)s_next_y16[i] / 65536.0);
+        } else if (unpinned) {
+            px[i] = (float)((double)s_next_unpinned_x16[i] / 65536.0);
+            py[i] = (float)((double)s_next_unpinned_y16[i] / 65536.0);
         } else {
             px[i] = (float)xs[i] + (sprite ? s_sprite_sides[xs[i] == s_sprite_x ? 0 : 2] : 0.0f);
             py[i] = (float)ys[i] + (sprite ? s_sprite_sides[ys[i] == s_sprite_y ? 1 : 3] : 0.0f);
@@ -598,9 +604,10 @@ static int take_visual_triangle(const int *xs, const int *ys,
     }
     s_next_world = 0;
     s_next_precise = 0;
+    s_next_unpinned = 0;
     s_next_perspective = 0;
     s_next_temporal_depth = 0;
-    return (world || sprite ? 1 : 0) | (exact ? 2 : 0);
+    return (world || sprite || unpinned ? 1 : 0) | (exact ? 2 : 0);
 }
 
 /* ---- dirty-rect helpers ------------------------------------------------- */
@@ -1823,6 +1830,7 @@ static void gpu_geometry(GLenum mode, const int *xs, const int *ys,
     else {
         s_next_world = 0;
         s_next_precise = 0;
+        s_next_unpinned = 0;
         s_next_perspective = 0;
         s_next_temporal_depth = 0;
     }
@@ -2068,6 +2076,7 @@ static void gpu_flat_rect(int x,int y,int w,int h,uint16_t c,int semi) {
      * prepared for a rejected polygon leak into the first triangle here. */
     s_next_world = 0;
     s_next_precise = 0;
+    s_next_unpinned = 0;
     s_next_perspective = 0;
     s_next_temporal_depth = 0;
     if (w <= 0 || h <= 0) return;
@@ -2114,6 +2123,7 @@ static void gpu_textured_rect(int x,int y,int w,int h,
      * triangle, even though it is decomposed into two triangles below. */
     s_next_world = 0;
     s_next_precise = 0;
+    s_next_unpinned = 0;
     s_next_perspective = 0;
     s_next_temporal_depth = 0;
     s_sprite_depth = s_next_sprite_depth;
@@ -2265,6 +2275,7 @@ static void glb_set_geometry_correction(int enabled) {
     if (!s_geometry_correction) {
         s_next_world = 0;
         s_next_precise = 0;
+        s_next_unpinned = 0;
         s_next_perspective = 0;
         s_next_temporal_depth = 0;
         s_yaw_sin = 0.0f;
@@ -2291,6 +2302,14 @@ static void glb_set_precise_triangle(int enabled,
     s_next_x16[0] = x0; s_next_y16[0] = y0;
     s_next_x16[1] = x1; s_next_y16[1] = y1;
     s_next_x16[2] = x2; s_next_y16[2] = y2;
+}
+
+static void glb_set_unpinned_triangle(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2) {
+    if (!s_raster_ok) return;
+    s_next_unpinned = 1;
+    s_next_unpinned_x16[0] = x0; s_next_unpinned_y16[0] = y0;
+    s_next_unpinned_x16[1] = x1; s_next_unpinned_y16[1] = y1;
+    s_next_unpinned_x16[2] = x2; s_next_unpinned_y16[2] = y2;
 }
 
 static void glb_set_perspective_triangle(int enabled,
@@ -4499,6 +4518,7 @@ static const GpuRenderBackend GL_BACKEND = {
     .set_geometry_correction = glb_set_geometry_correction,
     .set_world_triangle = glb_set_world_triangle,
     .set_precise_triangle = glb_set_precise_triangle,
+    .set_unpinned_triangle = glb_set_unpinned_triangle,
     .set_perspective_triangle = glb_set_perspective_triangle,
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
     .set_temporal_depth_triangle = glb_set_temporal_depth_triangle,

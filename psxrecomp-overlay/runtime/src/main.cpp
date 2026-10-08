@@ -4845,7 +4845,7 @@ static void sdl_vblank_present(void) {
          * of truth, shared with the GTE/GPU squash so content and present stay
          * locked: we squash IFF we stretch. depth24 always classifies as FMV
          * even if the ws layer is not engaged yet (4:3 titles). */
-        fmv_frame = di.depth24 || !g_ws_engaged || gpu_ws_present_native_43() != 0;
+        fmv_frame = di.depth24 || !g_ws_engaged || gpu_ws_displayed_native_43() != 0;
         /* MDEC movies are already decoded at their authored cadence and are
          * CPU/upload heavy. High-refresh crossfades only contend with decoding
          * and can starve audio, so present native-4:3/MDEC phases directly.

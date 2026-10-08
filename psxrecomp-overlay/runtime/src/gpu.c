@@ -25,9 +25,12 @@
 #include "mod_runtime.h"
 #include "ws_cull_detect.h"
 #include "ws_aspect_cone_math.h"
+#include "gpu_pinned_corner.h"
 #include "gpu_ws_hud_scale.h"
+#include "gpu_ws_hud_widget.h"
 #include "gpu_ws_screen_tile.h"
 #include "gpu_ws_tag_match.h"
+#include "gpu_ws_frame_kind.h"
 #include "gpu_temporal_sprite.h"
 #include "ws_ui_group.h"
 #include <math.h>
@@ -208,6 +211,8 @@ static int ws_gameplay_state_value_count = 0;
  * intro-cutscene flicker). Only a genuine full-2D screen — no GTE projection for
  * this many consecutive frames (save/options/memory-card) — reverts to 4:3. */
 #define WS_GTE_GAME_MODE_HYSTERESIS 45u
+static PsxWsFrameKinds ws_frame_kinds;
+static uint32_t display_area_x, display_area_y;
 void gpu_ws_set_gte_game_mode(int on) { ws_gte_game_mode_cfg = on ? 1 : 0; }
 void gpu_ws_set_gameplay_state_gate(uint32_t addr,
                                     const uint32_t *values, int nvalues) {
@@ -271,6 +276,7 @@ static uint32_t ws_sust_ovh_stamp = (uint32_t)-1000;
 
 void psx_ws_note_gte_project(int nverts) {
     uint32_t f = (uint32_t)s_frame_count;
+    psx_ws_frame_kinds_project(&ws_frame_kinds, (uint32_t)nverts);
     if (f != ws_gte_frame) {
         if (f == ws_gte_frame + 1u) ws_gte_prev_verts = ws_gte_count;
         else                        ws_gte_prev_verts = 0;
@@ -293,14 +299,22 @@ static int ws_full_2d_mode(void) {
     if (env < 0) { const char *e = getenv("PSX_WS_FORCE_2D"); env = (e && e[0] == '1') ? 1 : 0; }
     return ws_full_2d || env;
 }
-static int ws_game_mode(void) {
+/* `displayed` asks about the frame on display, which a double-buffered game drew one frame before the one it is
+ * drawing now. A GTE-detected game's frames are told apart per buffer, and the grace below only covers the start. */
+static int ws_game_mode_of(int displayed) {
     int state_match = ws_gameplay_state_matches();
     if (state_match >= 0) return state_match;
     if (ws_full_2d_mode()) return 1;
-    if (ws_gte_game_mode_cfg &&
-        (uint32_t)s_frame_count - ws_last_gte_stamp <= WS_GTE_GAME_MODE_HYSTERESIS) return 1;
+    if (ws_gte_game_mode_cfg) {
+        const int flat = displayed
+            ? psx_ws_frame_kinds_displayed(&ws_frame_kinds, display_area_x, display_area_y)
+            : psx_ws_frame_kinds_drawing(&ws_frame_kinds, WS_GTE_GAME_MODE_MIN_VERTS);
+        if (flat >= 0) return !flat;
+        if ((uint32_t)s_frame_count - ws_last_gte_stamp <= WS_GTE_GAME_MODE_HYSTERESIS) return 1;
+    }
     return (uint32_t)s_frame_count - ws_last_tag_stamp <= 2;
 }
+static int ws_game_mode(void) { return ws_game_mode_of(0); }
 
 /* True when the current frame is presented at native 4:3 (NOT stretched), so
  * ALL squash must be suppressed and the content rendered pixel-native:
@@ -335,9 +349,9 @@ static int ws_2d_only_scene(void) {
 static uint32_t s_ws_fmv_frame_cache = 0xFFFFFFFFu;
 static int      s_ws_fmv_cached = 0;
 
-int gpu_ws_present_native_43(void) {
+static int ws_native_43(int displayed) {
     if (!ws_engaged()) return 0;
-    if (!ws_game_mode()) return 1;                 /* full-2D screen */
+    if (!ws_game_mode_of(displayed)) return 1;     /* full-2D screen */
     if (ws_2d_only_scene()) return 1;              /* 2D-only gameplay scene */
     uint32_t f = (uint32_t)s_frame_count;
     if (f != s_ws_fmv_frame_cache) {
@@ -347,6 +361,9 @@ int gpu_ws_present_native_43(void) {
     }
     return s_ws_fmv_cached;
 }
+int gpu_ws_present_native_43(void) { return ws_native_43(0); }
+int gpu_ws_displayed_native_43(void) { return ws_native_43(1); }
+void gpu_ws_tell_frame_kind(int flat) { psx_ws_frame_kinds_tell(&ws_frame_kinds, flat); }
 
 /* Squash applies only when configured AND the frame is being stretched. */
 static int ws_active(void) { return ws_configured() && !gpu_ws_present_native_43(); }
@@ -2231,6 +2248,50 @@ static int ws_hud_user_scale(int32_t *x, int32_t *y, int *w, int *h) {
     return 1;
 }
 
+static PsxWsHudWidgets ws_hud;
+static uint32_t ws_hud_table_pointer;
+
+void gpu_ws_set_hud_widgets(uint32_t table_pointer, int layers, const int32_t *boxes, int count) {
+    ws_hud_table_pointer = table_pointer;
+    memset(&ws_hud, 0, sizeof(ws_hud));
+    ws_hud.layers = layers;
+    for (int i = 0; boxes && i < count && i < PSX_WS_HUD_WIDGET_MAX; ++i) {
+        const int32_t *box = boxes + 6 * i;
+        const PsxWsHudWidget widget = { box[0], box[1], box[2], box[3], box[4], box[5] };
+        ws_hud.widgets[ws_hud.count++] = widget;
+    }
+}
+
+/* The widget of an untagged widescreen primitive with these bounds. See psx_ws_hud_widgets_take. */
+static const PsxWsHudWidget *ws_hud_widget(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int rectangle) {
+    if (!ws_active() || psx_ws_prim_is_tagged()) return NULL;
+    return psx_ws_hud_widgets_take(&ws_hud, x0, y0, x1, y1, rectangle);
+}
+
+/* A widget's rectangle in place. 0 for a rectangle of no widget. */
+static int ws_hud_widget_rect(int32_t *x, int32_t *y, int32_t *w, int32_t *h) {
+    const PsxWsHudWidget *widget = ws_hud_widget(*x, *y, *x + *w, *y + *h, 1);
+    if (!widget) return 0;
+    psx_ws_hud_widget_rect(widget, x, y, w, h, ws_xnum, ws_xden, ws_hud_scale_percent);
+    return 1;
+}
+
+/* A widget's axis-aligned quad, every corner through the same mapping. A quad joins in a HUD layer only. */
+static void ws_hud_widget_quad(int32_t vx[4], int32_t vy[4]) {
+    int32_t min_x = vx[0], max_x = vx[0], min_y = vy[0], max_y = vy[0];
+    if (!ws_hud.in_hud_layer || !ws_axis_aligned_quad(vx, vy)) return;
+    for (int i = 1; i < 4; i++) {
+        if (vx[i] < min_x) min_x = vx[i];
+        if (vx[i] > max_x) max_x = vx[i];
+        if (vy[i] < min_y) min_y = vy[i];
+        if (vy[i] > max_y) max_y = vy[i];
+    }
+    const PsxWsHudWidget *widget = ws_hud_widget(min_x, min_y, max_x, max_y, 0);
+    if (!widget) return;
+    for (int i = 0; i < 4; i++)
+        psx_ws_hud_widget_corner(widget, &vx[i], &vy[i], ws_xnum, ws_xden, ws_hud_scale_percent);
+}
+
 /* Shared transform for fixed-size textured sprites (8x8 / 16x16 / 1x1 dot):
  * squash *x0 in place (around the tagged anchor, else the HUD pivot) and
  * return the squashed draw width, or 0 = no change. *out_h is the draw
@@ -2242,6 +2303,11 @@ static int ws_sprt_fixed_transform(int32_t *x0, int32_t *y0, int w, int *out_h) 
     if (ws_tagged_anchor(&ax)) {
         *x0 = ws_scale_about(*x0, ax);
         return (int)ws_scale_len(w);
+    }
+    int32_t widget_w = w, widget_h = w;
+    if (ws_hud_widget_rect(x0, y0, &widget_w, &widget_h)) {
+        *out_h = (int)widget_h;
+        return (int)widget_w;
     }
     int auto_w = w;
     if (ws_auto_ui_transform_rect(x0, *y0, &auto_w, w))
@@ -2714,18 +2780,23 @@ static void ws_clear_all_reveal_margins(void) {
  * stage art. A stale reveal tile is safer than deleting submitted content. */
 void gpu_ws_begin_linked_list(void) {
     gp0_ot_rank = 0xFFFFu;
+    psx_ws_hud_widgets_list(&ws_hud, ws_hud.count && ws_active() ? psx_read_word(ws_hud_table_pointer) : 0u);
 }
 
 void gpu_set_gp0_linked_list_node(uint32_t addr, uint32_t word_count) {
     (void)addr;
+    psx_ws_frame_kinds_list(&ws_frame_kinds, 1);
     if (word_count == 0) {
         gp0_ot_rank = gp0_ot_rank == 0xFFFFu ? 0u
                                              : (uint16_t)(gp0_ot_rank + 1u);
+        psx_ws_hud_widgets_node(&ws_hud, addr);
     }
 }
 
 void gpu_ws_end_linked_list(void) {
+    psx_ws_frame_kinds_list(&ws_frame_kinds, 0);
     gp0_ot_rank = 0xFFFFu;
+    psx_ws_hud_widgets_list_end(&ws_hud);
 }
 
 
@@ -3460,6 +3531,8 @@ static uint16_t s_precise_vertex_depth[4];
 static uint64_t s_precise_vertex_identity[4];
 static int s_precise_vertex_partial;
 #endif
+/* A polygon that falls back still draws the corners the game pinned where they project: its neighbours do. */
+static PsxPinnedPlaces s_pinned_places;
 #ifdef PSX_HAS_DISRUPTOR_GROWN_QUAD
 extern int disruptor_grown_quad_sources(
     uint32_t command_address, const uint32_t *packet,
@@ -3474,6 +3547,7 @@ static int resolve_precise_vertices(const int *indices, int count,
     memset(s_precise_vertex_identity, 0, sizeof(s_precise_vertex_identity));
     s_precise_vertex_partial = 0;
 #endif
+    s_pinned_places.unpinned = 0;
     if (!gte_geometry_correction_enabled())
         return 0;
 
@@ -3504,6 +3578,8 @@ static int resolve_precise_vertices(const int *indices, int count,
     int32_t precise_x[4], precise_y[4], raw_x[4], raw_y[4];
     uint16_t z[4];
     int resolved = 0;
+    int pinned[4] = {0};
+    const int unpin = gte_precision_unpin_enabled();
     uint32_t grown_addr[4] = {0}, grown_word[4] = {0};
 #ifdef PSX_HAS_DISRUPTOR_GROWN_QUAD
     /* Disruptor's second, grown copy of a world quad stands on the first packet's corners. */
@@ -3532,15 +3608,16 @@ static int resolve_precise_vertices(const int *indices, int count,
                  * offsets and widescreen transforms in vx/vy must not hide a
                  * saturated or otherwise non-subpixel discrepancy. */
                 /* A corner the game pinned to its guard band is drawn where it projects. */
+                pinned[i] = gte_precision_word_clamped(addr, word);
                 if ((fixed16_integer_floor(precise_x[i]) != raw_x[i] ||
                      fixed16_integer_floor(precise_y[i]) != raw_y[i]) &&
-                    !gte_precision_word_clamped(addr, word)) {
+                    !pinned[i]) {
                     reject = GPU_GEOMETRY_REJECT_INTEGER_MISMATCH;
                 } else {
                     accepted = 1;
                     ++resolved;
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
-                    s_precise_vertex_depth[i] = z[i];
+                    s_precise_vertex_depth[i] = psx_pinned_corner_depth(unpin, pinned[i], z[i]);
 #endif
                 }
             }
@@ -3569,6 +3646,7 @@ static int resolve_precise_vertices(const int *indices, int count,
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
             s_precise_vertex_partial = 1;
 #endif
+            psx_pinned_places(count, unpin, pinned, precise_x, precise_y, raw_x, raw_y, vx, vy, &s_pinned_places);
         }
         return 0;
     }
@@ -3584,7 +3662,7 @@ static int resolve_precise_vertices(const int *indices, int count,
                                 raw_x, raw_y, z);
     for (int i = 0; i < count; ++i) {
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
-        s_precise_vertex_depth[i] = z[i];
+        s_precise_vertex_depth[i] = psx_pinned_corner_depth(unpin, pinned[i], z[i]);
         {
             uint32_t identity_addr;
             /* A grown corner is off its model point: it gets the depth and no identity. */
@@ -3617,6 +3695,9 @@ static void queue_precise_triangle(int exact,
     if (geometry_enabled) ++ws_geometry_world_triangles;
     if (!geometry_enabled || !exact) {
         gr_set_precise_triangle(0, 0,0, 0,0, 0,0);
+        if (geometry_enabled && s_pinned_places.unpinned)
+            gr_set_unpinned_triangle(s_pinned_places.x16[a], s_pinned_places.y16[a], s_pinned_places.x16[b], s_pinned_places.y16[b],
+                                     s_pinned_places.x16[c], s_pinned_places.y16[c]);
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
         /* The corners that did resolve keep their depth: an in-between frame moves them with the camera. */
         if (geometry_enabled && s_precise_vertex_partial)
@@ -3630,7 +3711,7 @@ static void queue_precise_triangle(int exact,
     ++ws_geometry_precise_triangles;
     gr_set_world_triangle(1);
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
-    gr_set_temporal_depth_triangle(1,
+    gr_set_temporal_depth_triangle(psx_pinned_depth_mode(s_precise_vertex_depth[a], s_precise_vertex_depth[b], s_precise_vertex_depth[c]),
                                    (float)s_precise_vertex_depth[a],
                                    (float)s_precise_vertex_depth[b],
                                    (float)s_precise_vertex_depth[c]);
@@ -3930,6 +4011,7 @@ static void gp0_exec_mono_quad(void) {
         gr_draw_flat_rect(x, y, w, h, color);
         return;
     }
+    ws_hud_widget_quad(vx, vy);
     ws_nw_backdrop_stretch_quad(vx, vy);   /* full-frame 2D backdrop stretch (no-op else) */
     ws_nw_hud_shift_vertices(vx, 4);
     for (int i = 0; i < 4; i++) {
@@ -4141,6 +4223,7 @@ static void gp0_exec_textured_quad(void) {
             for (int i = 0; i < 4; i++) vx[i] = ws_scale_about(vx[i], ws_ax);
         }
     }
+    ws_hud_widget_quad(vx, vy);
     ws_auto_ui_transform_quad(vx, vy);
     ws_nw_backdrop_stretch_quad(vx, vy);   /* full-frame 2D backdrop image stretch (no-op else) */
     ws_nw_hud_shift_vertices(vx, 4);
@@ -4414,7 +4497,11 @@ static void gp0_exec_textured_rect(void) {
             ws_w = (int)ws_scale_len(w);
         } else {
             int corrected_w = w;
-            if (ws_auto_ui_transform_rect(&x0, y0, &corrected_w, h))
+            int32_t widget_w = w, widget_h = h;
+            if (ws_hud_widget_rect(&x0, &y0, &widget_w, &widget_h)) {
+                ws_w = (int)widget_w;
+                ws_h = (int)widget_h;
+            } else if (ws_auto_ui_transform_rect(&x0, y0, &corrected_w, h))
                 ws_w = corrected_w;
             else if (ws_hud_sprt) {
                 int scaled_w = w, scaled_h = h;
@@ -4597,7 +4684,9 @@ static void gp0_exec_draw_area_tl(void) {
     draw_area_top  = (param >> 10) & 0x3FF;
     gr_set_draw_area((int)draw_area_left, (int)draw_area_top,
                      (int)draw_area_right, (int)draw_area_bottom);
+    psx_ws_hud_widgets_frame(&ws_hud);
     ws_nw_sync_target();  /* back buffer (draw_area_left) → wide mirror surface */
+    psx_ws_frame_kinds_area(&ws_frame_kinds, draw_area_left, draw_area_top, WS_GTE_GAME_MODE_MIN_VERTS);
 }
 
 static void gp0_exec_draw_area_br(void) {
@@ -5808,7 +5897,11 @@ static void gp1_display_mode(uint32_t val) {
     hres1 = val & 3;
     vres = (val >> 2) & 1;
     video_mode = (val >> 3) & 1;
-    display_depth = (val >> 4) & 1;
+    const uint32_t depth = (val >> 4) & 1;
+    /* A 24-bit scanout reads the CPU copy of VRAM, and a GPU backend leaves that copy without what it drew. Disruptor
+     * blacks out its movie's area with a rectangle a few VBlanks before it switches, so sync once, at the switch. */
+    if (depth && !display_depth) (void)gr_vram_read(0, 0);
+    display_depth = depth;
     vertical_interlace = (val >> 5) & 1;
     /* GPUSTAT.13 holds the legacy constant 0 in progressive (see the vblank
      * field flip); clear it on the switch so a title that toggles interlace

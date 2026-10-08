@@ -972,7 +972,8 @@ static inline void gpu_temporal_mesh_write_triangle(
 /* `departed`, `departed_from` and `departed_to` have previous indexing and may
  * be NULL. A previous face the game no longer submits still covers part of
  * the screen between the two frames: it is flagged and given the two ends of
- * its path. A corner it shares with a current face takes that face's path. */
+ * its path. A corner it shares with a current face takes that face's path.
+ * The flag is 2 for a face with a corner that has no depth: it stays where it was drawn. */
 static inline int gpu_temporal_mesh_prepare_scene(
         const GpuTemporalTriangle *prev, int prev_n,
         const GpuTemporalTriangle *curr, int curr_n,
@@ -1334,13 +1335,16 @@ static inline int gpu_temporal_mesh_prepare_scene(
     if (departed && has_forward) for (int triangle = 0; triangle < prev_n; ++triangle) {
         GpuTemporalTriangle start = prev[triangle], to = prev[triangle];
         int known = prev[triangle].world && reverse[triangle] < 0;
+        int carried = 0;
         for (int vertex = 0; vertex < 3 && known; ++vertex) {
             const float x = prev[triangle].x[vertex], y = prev[triangle].y[vertex];
             double nx = 0.0, ny = 0.0, weight = 0.0;
             const GpuTemporalCornerEntry *entry = NULL;
             start.w[vertex] = 0.0f;
+            if (prev[triangle].depth[vertex] == 0.0f) { to.w[vertex] = 0.0f; continue; }
             known = gpu_temporal_mesh_known_depth(prev[triangle].depth[vertex]);
             if (!known) break;
+            ++carried;
             if (corners && prev[triangle].modelled)
                 entry = gpu_temporal_corner_find(
                     corners, corner_mask, gpu_temporal_corner_key(prev[triangle].model[vertex], shift));
@@ -1367,11 +1371,11 @@ static inline int gpu_temporal_mesh_prepare_scene(
             to.depth[vertex] = (float)(prev[triangle].depth[vertex] * weight);
         }
         /* A face still submitted has its own interpolated copy on top. */
-        if (!known || !gpu_temporal_mesh_camera_safe(&prev[triangle], &to) ||
+        if (!known || !carried || !gpu_temporal_mesh_camera_safe(&prev[triangle], &to) ||
             gpu_temporal_camera_rematch(&forward, curr, curr_n, &prev[triangle]) >= 0) continue;
         departed_from[triangle] = start;
         departed_to[triangle] = to;
-        departed[triangle] = 1;
+        departed[triangle] = carried == 3 ? 1 : 2;
         if (stats) ++stats->departed_faces;
     }
 
