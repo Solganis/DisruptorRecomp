@@ -231,6 +231,16 @@ VANILLA_PORTAL_AND_POINT_SITES = (
 )
 
 
+def billboard_seam_precedes_texture_stores(shard_text: str) -> bool:
+    """Whether the 0x8003D488 hook precedes its CLUT and page stores."""
+    seam = shard_text.find(
+        "disruptor_billboard_aspect_instruction_hook(cpu, 0x8003D488u, ")
+    late = ["/* 0x8003D4A0: 0xA602000E */", "/* 0x8003D4A8: 0xA6020016 */"]
+    if seam < 0 or any(shard_text.count(comment) != 1 for comment in late):
+        return False
+    return seam < shard_text.index(late[0]) < shard_text.index(late[1])
+
+
 def format_addresses(addresses: set[int]) -> str:
     values = sorted(addresses)
     shown = ", ".join(f"0x{value:08X}" for value in values[:12])
@@ -500,6 +510,11 @@ def main() -> int:
             + str(BILLBOARD_ASPECT_SITES)
             + ", found "
             + str(generated_billboard_aspect_sites)
+        )
+    if not billboard_seam_precedes_texture_stores(shard_text):
+        failures.append(
+            "the 0x8003D488 billboard seam must precede its packet's CLUT "
+            "and texture page stores"
         )
 
     backdrop_tile_matches = re.findall(

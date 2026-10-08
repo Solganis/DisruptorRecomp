@@ -9,12 +9,12 @@ enum PsxWsTagMatchResult {
     PSX_WS_TAG_CONTENT_MISMATCH = -1,
 };
 
-/* Fingerprint every GP0 word in a completed POLY_FT4.  This is deliberately
- * independent of host byte order so the producer and command consumer agree. */
+/* Fingerprint a POLY_FT4's GP0 words, independent of host byte order. CLUT and
+ * page are left out: the 0x8003D488 seam tags before the game stores them. */
 static inline uint32_t psx_ws_ft4_signature_words(const uint32_t *words) {
     uint32_t hash = 2166136261u;
     for (int i = 0; i < 9; i++) {
-        uint32_t word = words[i];
+        uint32_t word = i == 2 || i == 4 ? words[i] & 0xFFFFu : words[i];
         for (int byte = 0; byte < 4; byte++) {
             hash ^= word & 0xFFu;
             hash *= 16777619u;
