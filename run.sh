@@ -2,7 +2,8 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-RUNTIME="$ROOT/build/DisruptorRecompiled"
+BUILD="$ROOT/${DISRUPTOR_BUILD_DIRECTORY:-build}"
+RUNTIME="$BUILD/DisruptorRecompiled"
 DISC="$ROOT/input/Disruptor (USA).cue"
 
 [ -x "$RUNTIME" ] || { echo "Run ./build.sh first." >&2; exit 1; }
@@ -56,10 +57,10 @@ if [ "$PERSPECTIVE_TEXTURES" -eq 1 ]; then
 fi
 
 if [ "$MODERN_CONTROLS" -eq 1 ]; then
-    cp "$ROOT/keybinds-modern.ini" "$ROOT/build/keybinds.ini"
+    cp "$ROOT/keybinds-modern.ini" "$BUILD/keybinds.ini"
     echo "Modern controls enabled: WASD, LMB fire, RMB psionic, Space jump, E use."
 else
-    cp "$ROOT/keybinds-original.ini" "$ROOT/build/keybinds.ini"
+    cp "$ROOT/keybinds-original.ini" "$BUILD/keybinds.ini"
 fi
 
 GAME_CONFIG=game.toml

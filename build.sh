@@ -45,9 +45,10 @@ bash tools/regen_bios.sh --config bios/OpenBIOS.toml
 
 cd "$ROOT"
 # shellcheck disable=SC2086
-cmake -S . -B build $GENERATOR -DCMAKE_BUILD_TYPE=Release \
+BUILD="${DISRUPTOR_BUILD_DIRECTORY:-build}"
+cmake -S . -B "$BUILD" $GENERATOR -DCMAKE_BUILD_TYPE=Release \
     -DPSX_RECOMP_UI=OFF -DPSX_ENABLE_VULKAN=OFF
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+cmake --build "$BUILD" --parallel
+ctest --test-dir "$BUILD" --output-on-failure
 
 echo "Build complete. Add the matching BIN/CUE, then run ./run.sh."
