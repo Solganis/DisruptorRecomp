@@ -52,8 +52,8 @@ chmod +x build.sh run.sh tools/regen.sh
 
 ## In-between frames
 
-The presentation-only frame interpolator is built by default and switched on
-in **Settings → Enhancements**. Configure with
+The presentation-only frame interpolator is built by default, but starts off
+until enabled in **Settings → Enhancements**. Configure with
 `-DDISRUPTOR_FRAME_INTERPOLATION=OFF` to leave it out.
 
 ## Generated game code

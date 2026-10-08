@@ -25,7 +25,7 @@ disc revision; the redistributable OpenBIOS backend is used for booting.
 
 ## Play the Windows alpha
 
-[Download v0.1.0-alpha.1](https://github.com/micmea668/DisruptorRecomp/releases/tag/v0.1.0-alpha.1),
+[Download v0.1.0-alpha.2](https://github.com/micmea668/DisruptorRecomp/releases/tag/v0.1.0-alpha.2),
 extract the Windows ZIP, add your supported USA BIN/CUE to its `input/` folder,
 and double-click **Play Disruptor.cmd**. OpenBIOS is included; no build tools are
 needed. See the [getting-started guide](docs/PLAYING.md) for prerequisites,

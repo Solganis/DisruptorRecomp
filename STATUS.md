@@ -1,6 +1,6 @@
 # Project status
 
-Last verified: **6 October 2026**. The project is in development; full campaign
+Last verified: **8 October 2026**. The project is in development; full campaign
 and public-release validation are incomplete.
 
 | Area | Current state |
@@ -12,9 +12,9 @@ and public-release validation are incomplete.
 | Settings | Controls, Enhancements, Cheats, and System tabs; supported preferences persist between runs. |
 | Interpolation and diagnostics | In-between frames are experimental and off until switched on in Settings. The Diagnostics tab and experimental debug controls are removed. |
 | Ultrawide corruption | Fixed primitive-buffer overflow. The user's 8x / 32:9 training retest stayed correct through 8,934 frames and closed normally. |
-| Save states | Expanded rendering buffers survive saving and loading in a fresh process; the training-level restart check passed. |
+| Save states | Save states require a matching build. The alpha.2 code-generation changes make alpha.1 save states incompatible; use memory-card saves for progress across releases. |
 | Automated checks | Windows Release build and all 37 root CTests passed. |
-| Player package | Windows x64 alpha includes the launcher, OpenBIOS, and setup guide. A clean extracted package reached the first mission using only a BIN/CUE; the production launcher also loaded a gameplay save state. |
+| Player package | Windows x64 alpha includes the launcher, OpenBIOS, setup guide, and dependency licenses; players supply their supported BIN/CUE. |
 
 ## Remaining limits
 
@@ -22,9 +22,10 @@ and public-release validation are incomplete.
   unverified.
 - The source build requires local generation from the verified game executable.
   Prebuilt release users only need their supported BIN/CUE disc image.
-- The retail game produces about 30 unique world/camera frames per second while
-  host presentation runs at about 60 Hz. Higher render resolution does not
-  increase that game cadence.
+- Gameplay defaults to the retail cadence of about 30 unique world/camera
+  frames per second. Experimental 60 FPS gameplay removes that floor, and
+  in-between frames add presentation frames. Higher render resolution alone
+  does not increase the game cadence.
 - The widescreen sky and skyline backdrop draws extra tile columns to keep its
   proportions. Checked at 16:9, 21:9, and 32:9 in the first mission only.
 - Vertical aim needs broader actor, room-edge, and level-transition testing.
