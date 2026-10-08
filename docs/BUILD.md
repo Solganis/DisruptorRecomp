@@ -29,6 +29,32 @@ is produced in `build/`, or `build/Release/` for a multi-configuration generator
 Set `DISRUPTOR_BUILD_DIRECTORY` to build into and run from another folder of the
 repository instead. `build.sh` and `run.sh` read it too.
 
+Windows builds also produce `DisruptorLauncher.exe` beside the runtime and
+stage its configuration, help, and initial settings there. The launcher is
+compiled with a static MSVC runtime so setup can open before the game runtime's
+VC++ redistributable is installed. It imports existing disc dumps; physical
+drive reading is outside the current scope. Release packaging includes it
+automatically through `tools/package_release.py` and still excludes game data.
+
+For launcher-only iteration after configuration:
+
+```powershell
+cmake --build build --config Release --target disruptor-launcher disruptor-disc-import-test
+ctest --test-dir build -C Release -R disruptor_disc_import --output-on-failure
+```
+
+`DisruptorLauncher.exe --verify IMAGE` checks an image without copying it.
+`--import IMAGE --root FOLDER` performs the normal import without starting the
+game; `--check --root FOLDER` verifies installed data and required build files.
+These diagnostic modes return zero only on success and report to redirected
+stdout/stderr. The GUI always resolves the build folder from its executable,
+so shortcuts work even when opened from a different working directory.
+
+Supported revisions are defined in `src/launcher/disc_import.cpp`. Future PAL
+and Japanese entries must include the full raw-disc size/hash and a matching
+game configuration and compiled runtime support. Do not enable a region by
+serial alone; the current game hooks and translated code are USA-specific.
+
 Optional launch switches can be combined:
 
 ```powershell

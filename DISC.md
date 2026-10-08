@@ -12,7 +12,14 @@ The disc has one **MODE2/2352** data track starting at `00:00:00`, with 270,557
 raw sectors. Keep the BIN/CUE format: converting to a cooked 2048-byte ISO loses
 information needed for PlayStation audio and video.
 
-Place the executable, `Disruptor (USA).cue`, and its referenced BIN in `input/`.
+Windows builds include `DisruptorLauncher.exe`, which accepts this exact raw
+image as BIN, CUE, ISO, or IMG, verifies its full SHA-256, and installs a
+normalized BIN/CUE in `input/discs/SLUS-00224/`. The extension alone does not
+make an image compatible: cooked ISOs are rejected. Only one MODE2/2352 track
+at INDEX 01 `00:00:00` is supported. No loose executable extraction is needed
+for players using the launcher.
+
+For source builds, place the executable, `Disruptor (USA).cue`, and its referenced BIN in `input/`.
 The CUE's `FILE` entry must match the BIN filename. Verify the supplied files in
 PowerShell with:
 

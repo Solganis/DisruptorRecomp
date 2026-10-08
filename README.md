@@ -22,6 +22,8 @@ disc revision; the redistributable OpenBIOS backend is used for booting.
 - Experimental vertical mouse look and weapon aim.
 - In-game settings for controls, display, fullscreen, VSync, volume, and mute.
 - Memory-card saves and twelve save-state slots.
+- Windows launcher with disc-image browsing, automatic copy/CUE setup,
+  full-disc SHA-256 verification, and game launch.
 
 ## Play the Windows alpha
 
@@ -30,6 +32,12 @@ extract the Windows ZIP, add your supported USA BIN/CUE to its `input/` folder,
 and double-click **Play Disruptor.cmd**. OpenBIOS is included; no build tools are
 needed. See the [getting-started guide](docs/PLAYING.md) for prerequisites,
 controls, saves, and troubleshooting.
+
+New builds include **DisruptorLauncher.exe**: browse to your own supported
+USA CUE/BIN (or an identical raw ISO/IMG), and it installs, verifies, and starts
+the game. Your original dump is kept. This launcher is not included in the
+already published alpha.2 ZIP. Cooked ISOs, PAL, and Japanese discs are not
+supported yet.
 
 Join the [community Discord](https://discord.gg/aeTQjaQUr) to discuss the project
 and share feedback.

@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(DisruptorRecomp C CXX)
 
+if(WIN32)
+    enable_language(RC)
+endif()
+
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)
 
@@ -147,6 +151,9 @@ if(MSVC)
 endif()
 
 include(CTest)
+if(WIN32)
+    add_subdirectory(src/launcher)
+endif()
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 

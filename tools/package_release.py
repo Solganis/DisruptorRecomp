@@ -34,6 +34,7 @@ def main() -> None:
             raise SystemExit(f"Release build setting missing: {name}={value}")
     files = {
         "DisruptorRecompiled.exe": build / "DisruptorRecompiled.exe",
+        "DisruptorLauncher.exe": build / "DisruptorLauncher.exe",
         "game.toml": ROOT / "game.toml",
         "mouse-aim.ini": ROOT / "mouse-aim.ini",
         "keybinds.ini": ROOT / "keybinds-modern.ini",
@@ -54,12 +55,14 @@ def main() -> None:
     payload = {name: path.read_bytes() for name, path in files.items()}
     if len(payload["bios/openbios.bin"]) != 524288:
         raise SystemExit("Expected the bundled 512 KiB OpenBIOS image")
-    if not payload["DisruptorRecompiled.exe"].startswith(b"MZ"):
-        raise SystemExit("Expected a Windows executable")
-    pe = struct.unpack_from("<I", payload["DisruptorRecompiled.exe"], 0x3C)[0]
-    if (payload["DisruptorRecompiled.exe"][pe:pe+4] != b"PE\0\0" or
-            struct.unpack_from("<H", payload["DisruptorRecompiled.exe"], pe+4)[0] != 0x8664):
-        raise SystemExit("Expected an x64 Windows executable")
+    for name in ("DisruptorRecompiled.exe", "DisruptorLauncher.exe"):
+        binary = payload[name]
+        if len(binary) < 64 or not binary.startswith(b"MZ"):
+            raise SystemExit(f"Expected a Windows executable: {name}")
+        pe = struct.unpack_from("<I", binary, 0x3C)[0]
+        if (pe + 6 > len(binary) or binary[pe:pe+4] != b"PE\0\0" or
+                struct.unpack_from("<H", binary, pe+4)[0] != 0x8664):
+            raise SystemExit(f"Expected an x64 Windows executable: {name}")
 
     chdr = build / "_deps/psx_libchdr-src"
     notices = set()
@@ -86,7 +89,8 @@ def main() -> None:
         "included; supply your own supported Disruptor disc image.\n"
     ).encode("utf-8")
     payload["input/PUT_YOUR_DISC_HERE.txt"] = (
-        "Place Disruptor (USA).cue and its referenced BIN here.\r\n"
+        "Run DisruptorLauncher.exe and browse to your own USA disc image.\r\n"
+        "The launcher copies and verifies it here automatically.\r\n"
         "See GETTING_STARTED.md one folder above.\r\n"
     ).encode("utf-8")
     source_commit = subprocess.check_output(
