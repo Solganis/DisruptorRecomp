@@ -26,6 +26,7 @@
 #include "ws_cull_detect.h"
 #include "ws_aspect_cone_math.h"
 #include "gpu_ws_hud_scale.h"
+#include "gpu_ws_hud_widget.h"
 #include "gpu_ws_screen_tile.h"
 #include "gpu_ws_tag_match.h"
 #include "gpu_temporal_sprite.h"
@@ -2231,6 +2232,50 @@ static int ws_hud_user_scale(int32_t *x, int32_t *y, int *w, int *h) {
     return 1;
 }
 
+static PsxWsHudWidgets ws_hud;
+static uint32_t ws_hud_table_pointer;
+
+void gpu_ws_set_hud_widgets(uint32_t table_pointer, int layers, const int32_t *boxes, int count) {
+    ws_hud_table_pointer = table_pointer;
+    memset(&ws_hud, 0, sizeof(ws_hud));
+    ws_hud.layers = layers;
+    for (int i = 0; boxes && i < count && i < PSX_WS_HUD_WIDGET_MAX; ++i) {
+        const int32_t *box = boxes + 6 * i;
+        const PsxWsHudWidget widget = { box[0], box[1], box[2], box[3], box[4], box[5] };
+        ws_hud.widgets[ws_hud.count++] = widget;
+    }
+}
+
+/* The widget of an untagged widescreen primitive with these bounds. See psx_ws_hud_widgets_take. */
+static const PsxWsHudWidget *ws_hud_widget(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int rectangle) {
+    if (!ws_active() || psx_ws_prim_is_tagged()) return NULL;
+    return psx_ws_hud_widgets_take(&ws_hud, x0, y0, x1, y1, rectangle);
+}
+
+/* A widget's rectangle in place. 0 for a rectangle of no widget. */
+static int ws_hud_widget_rect(int32_t *x, int32_t *y, int32_t *w, int32_t *h) {
+    const PsxWsHudWidget *widget = ws_hud_widget(*x, *y, *x + *w, *y + *h, 1);
+    if (!widget) return 0;
+    psx_ws_hud_widget_rect(widget, x, y, w, h, ws_xnum, ws_xden, ws_hud_scale_percent);
+    return 1;
+}
+
+/* A widget's axis-aligned quad, every corner through the same mapping. A quad joins in a HUD layer only. */
+static void ws_hud_widget_quad(int32_t vx[4], int32_t vy[4]) {
+    int32_t min_x = vx[0], max_x = vx[0], min_y = vy[0], max_y = vy[0];
+    if (!ws_hud.in_hud_layer || !ws_axis_aligned_quad(vx, vy)) return;
+    for (int i = 1; i < 4; i++) {
+        if (vx[i] < min_x) min_x = vx[i];
+        if (vx[i] > max_x) max_x = vx[i];
+        if (vy[i] < min_y) min_y = vy[i];
+        if (vy[i] > max_y) max_y = vy[i];
+    }
+    const PsxWsHudWidget *widget = ws_hud_widget(min_x, min_y, max_x, max_y, 0);
+    if (!widget) return;
+    for (int i = 0; i < 4; i++)
+        psx_ws_hud_widget_corner(widget, &vx[i], &vy[i], ws_xnum, ws_xden, ws_hud_scale_percent);
+}
+
 /* Shared transform for fixed-size textured sprites (8x8 / 16x16 / 1x1 dot):
  * squash *x0 in place (around the tagged anchor, else the HUD pivot) and
  * return the squashed draw width, or 0 = no change. *out_h is the draw
@@ -2242,6 +2287,11 @@ static int ws_sprt_fixed_transform(int32_t *x0, int32_t *y0, int w, int *out_h) 
     if (ws_tagged_anchor(&ax)) {
         *x0 = ws_scale_about(*x0, ax);
         return (int)ws_scale_len(w);
+    }
+    int32_t widget_w = w, widget_h = w;
+    if (ws_hud_widget_rect(x0, y0, &widget_w, &widget_h)) {
+        *out_h = (int)widget_h;
+        return (int)widget_w;
     }
     int auto_w = w;
     if (ws_auto_ui_transform_rect(x0, *y0, &auto_w, w))
@@ -2714,6 +2764,7 @@ static void ws_clear_all_reveal_margins(void) {
  * stage art. A stale reveal tile is safer than deleting submitted content. */
 void gpu_ws_begin_linked_list(void) {
     gp0_ot_rank = 0xFFFFu;
+    psx_ws_hud_widgets_list(&ws_hud, ws_hud.count && ws_active() ? psx_read_word(ws_hud_table_pointer) : 0u);
 }
 
 void gpu_set_gp0_linked_list_node(uint32_t addr, uint32_t word_count) {
@@ -2721,11 +2772,13 @@ void gpu_set_gp0_linked_list_node(uint32_t addr, uint32_t word_count) {
     if (word_count == 0) {
         gp0_ot_rank = gp0_ot_rank == 0xFFFFu ? 0u
                                              : (uint16_t)(gp0_ot_rank + 1u);
+        psx_ws_hud_widgets_node(&ws_hud, addr);
     }
 }
 
 void gpu_ws_end_linked_list(void) {
     gp0_ot_rank = 0xFFFFu;
+    psx_ws_hud_widgets_list_end(&ws_hud);
 }
 
 
@@ -3930,6 +3983,7 @@ static void gp0_exec_mono_quad(void) {
         gr_draw_flat_rect(x, y, w, h, color);
         return;
     }
+    ws_hud_widget_quad(vx, vy);
     ws_nw_backdrop_stretch_quad(vx, vy);   /* full-frame 2D backdrop stretch (no-op else) */
     ws_nw_hud_shift_vertices(vx, 4);
     for (int i = 0; i < 4; i++) {
@@ -4141,6 +4195,7 @@ static void gp0_exec_textured_quad(void) {
             for (int i = 0; i < 4; i++) vx[i] = ws_scale_about(vx[i], ws_ax);
         }
     }
+    ws_hud_widget_quad(vx, vy);
     ws_auto_ui_transform_quad(vx, vy);
     ws_nw_backdrop_stretch_quad(vx, vy);   /* full-frame 2D backdrop image stretch (no-op else) */
     ws_nw_hud_shift_vertices(vx, 4);
@@ -4414,7 +4469,11 @@ static void gp0_exec_textured_rect(void) {
             ws_w = (int)ws_scale_len(w);
         } else {
             int corrected_w = w;
-            if (ws_auto_ui_transform_rect(&x0, y0, &corrected_w, h))
+            int32_t widget_w = w, widget_h = h;
+            if (ws_hud_widget_rect(&x0, &y0, &widget_w, &widget_h)) {
+                ws_w = (int)widget_w;
+                ws_h = (int)widget_h;
+            } else if (ws_auto_ui_transform_rect(&x0, y0, &corrected_w, h))
                 ws_w = corrected_w;
             else if (ws_hud_sprt) {
                 int scaled_w = w, scaled_h = h;
@@ -4597,6 +4656,7 @@ static void gp0_exec_draw_area_tl(void) {
     draw_area_top  = (param >> 10) & 0x3FF;
     gr_set_draw_area((int)draw_area_left, (int)draw_area_top,
                      (int)draw_area_right, (int)draw_area_bottom);
+    psx_ws_hud_widgets_frame(&ws_hud);
     ws_nw_sync_target();  /* back buffer (draw_area_left) → wide mirror surface */
 }
 

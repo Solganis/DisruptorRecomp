@@ -34,6 +34,7 @@ set(DISRUPTOR_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_mouse_aim.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_render_arena.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_grown_quad.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_hud_widgets.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_sprite_depth.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_vertical_camera.cpp")
 
@@ -198,6 +199,10 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hud_scale_contract.py")
 
+    add_test(NAME disruptor_hud_widget_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hud_widget_contract.py")
+
     add_test(NAME disruptor_grown_quad_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_grown_quad_contract.py"
@@ -282,6 +287,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_compile_features(disruptor-gpu-ws-hud-scale-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_gpu_ws_hud_scale
         COMMAND disruptor-gpu-ws-hud-scale-test)
+
+    add_executable(disruptor-gpu-ws-hud-widget-test
+        tests/gpu_ws_hud_widget_test.cpp)
+    target_include_directories(disruptor-gpu-ws-hud-widget-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-ws-hud-widget-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_gpu_ws_hud_widget
+        COMMAND disruptor-gpu-ws-hud-widget-test)
 
     add_executable(disruptor-frame-rate-test
         tests/disruptor_frame_rate_test.cpp)
