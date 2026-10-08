@@ -50,6 +50,12 @@ chmod +x build.sh run.sh tools/regen.sh
 
 `--mouse-aim` and `--vertical-look` are also available.
 
+## In-between frames
+
+The presentation-only frame interpolator is built by default and switched on
+in **Settings → Enhancements**. Configure with
+`-DDISRUPTOR_FRAME_INTERPOLATION=OFF` to leave it out.
+
 ## Generated game code
 
 The build scripts generate the translated resident game code locally from your

@@ -2231,7 +2231,7 @@ UserSettings load_user_settings(const fs::path& path) {
         });
         if (v.contains("frame_interpolation_fps")) try_get([&]{
             s.frame_interpolation_fps = toml::find<int>(v, "frame_interpolation_fps");
-            if (s.frame_interpolation_fps == 0 || s.frame_interpolation_fps >= 90)
+            if (s.frame_interpolation_fps == 0 || s.frame_interpolation_fps >= 30)
                 s.has_frame_interpolation_fps = true;
         });
         if (v.contains("frame_interpolation_blend")) try_get([&]{
@@ -2452,12 +2452,20 @@ UserSettings load_user_settings(const fs::path& path) {
             s.perspective_textures = toml::find<bool>(d, "perspective_textures");
             s.has_perspective_textures = true;
         });
+        if (d.contains("frame_unlock")) try_get([&]{
+            s.frame_unlock = toml::find<bool>(d, "frame_unlock");
+            s.has_frame_unlock = true;
+        });
         if (d.contains("hud_scale")) try_get([&]{
             const int percent = toml::find<int>(d, "hud_scale");
             if (percent >= 50 && percent <= 100) {
                 s.hud_scale = percent;
                 s.has_hud_scale = true;
             }
+        });
+        if (d.contains("improved_shadows")) try_get([&]{
+            s.improved_shadows = toml::find<bool>(d, "improved_shadows");
+            s.has_improved_shadows = true;
         });
     }
     return s;
@@ -2633,7 +2641,8 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
         s.has_vertical_look || s.has_vertical_sensitivity ||
         s.has_invert_vertical ||
         s.has_high_precision_camera || s.has_geometry_correction ||
-        s.has_perspective_textures || s.has_hud_scale) {
+        s.has_perspective_textures || s.has_frame_unlock || s.has_improved_shadows ||
+        s.has_hud_scale) {
         f << "\n[disruptor]\n";
         if (s.has_mouse_aim)
             f << "mouse_aim = " << (s.mouse_aim ? "true" : "false") << "\n";
@@ -2667,8 +2676,12 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
             f << "geometry_correction = " << (s.geometry_correction ? "true" : "false") << "\n";
         if (s.has_perspective_textures)
             f << "perspective_textures = " << (s.perspective_textures ? "true" : "false") << "\n";
+        if (s.has_frame_unlock)
+            f << "frame_unlock = " << (s.frame_unlock ? "true" : "false") << "\n";
         if (s.has_hud_scale && s.hud_scale >= 50 && s.hud_scale <= 100)
             f << "hud_scale = " << s.hud_scale << "\n";
+        if (s.has_improved_shadows)
+            f << "improved_shadows = " << (s.improved_shadows ? "true" : "false") << "\n";
     }
 
     f.flush();

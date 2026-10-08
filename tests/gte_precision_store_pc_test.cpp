@@ -739,6 +739,57 @@ int test_scratch_nine_slots_and_fail_closed_domains() {
     return 0;
 }
 
+uint32_t pack(int x, int y) {
+    return (static_cast<uint32_t>(x) & 0xFFFFu) | (static_cast<uint32_t>(y) << 16);
+}
+
+/* One projection goes through the scratch store as `stored` and on into main RAM. */
+bool pinned_arrives(uint32_t index, int x, int y, uint32_t stored, int expected_clamped) {
+    const uint32_t slot = kScratchFirst + index * kScratchStride;
+    const CopyRoute *route = scratch_route_for_slot(slot);
+    const uint32_t destination = 0x00162000u + index * 4u;
+    const int32_t x16 = x * 65536 + 0x4000;
+    const int32_t y16 = y * 65536 + 0x8000;
+    if (!route || !add_copy(*route)) return false;
+    gte_test_seed_precise_projection(2, pack(x, y), x16, y16, kZ);
+    capture(kOtherMfc2Pc, pack(x, y));
+    scratch_commit(slot);
+    scratch_store(slot, stored);
+    copy_read(*route, slot, stored);
+    commit(destination);
+    copy_store(*route, destination, stored);
+    if (expected_clamped < 0) return !lookup(destination, stored, x16, y16, kZ) && !gte_precision_word_clamped(destination, stored);
+    return lookup(destination, stored, x16, y16, kZ) && gte_precision_word_clamped(destination, stored) == expected_clamped;
+}
+
+int test_scratch_guard_band_keeps_the_projection() {
+    reset_fixture();
+    if (gte_precision_scratch_store_pc_route_clamp(kScratchStorePc, kStoreInsn, -0x100, 0x240, -0x100, 0x1F0))
+        return fail("a guard band was given to a route that does not exist");
+    if (!add_capture(kOtherMfc2Pc) || !add_scratch_store())
+        return fail("scratch route registration failed");
+    if (!pinned_arrives(0, -700, 130, pack(-0x100, 130), -1) || !pinned_arrives(1, -700, 130, pack(0, 0), -1))
+        return fail("a pinned word created provenance on a route without a guard band");
+    if (gte_precision_scratch_store_pc_route_clamp(kScratchStorePc, kStoreInsn ^ 4u, -0x100, 0x240, -0x100, 0x1F0) ||
+        gte_precision_scratch_store_pc_route_clamp(kScratchStorePc, kStoreInsn, 0x240, -0x100, -0x100, 0x1F0) ||
+        gte_precision_scratch_store_pc_route_clamp(kScratchStorePc, kStoreInsn, -0x100, 0x240, 0x1F0, -0x100))
+        return fail("a guard band with another instruction or with its ends crossed was accepted");
+    if (!gte_precision_scratch_store_pc_route_clamp(kScratchStorePc, kStoreInsn, -0x100, 0x240, -0x100, 0x1F0))
+        return fail("the guard band of the reviewed route was refused");
+
+    if (!pinned_arrives(0, -700, 130, pack(-0x100, 130), 1)) return fail("a corner pinned on the left lost its projection");
+    if (!pinned_arrives(1, 900, 130, pack(0x240, 130), 1)) return fail("a corner pinned on the right lost its projection");
+    if (!pinned_arrives(2, 40, -300, pack(40, -0x100), 1)) return fail("a corner pinned at the top lost its projection");
+    if (!pinned_arrives(3, 40, 800, pack(40, 0x1F0), 1)) return fail("a corner pinned at the bottom lost its projection");
+    if (!pinned_arrives(4, -700, 800, pack(-0x100, 0x1F0), 1)) return fail("a corner pinned on two sides lost its projection");
+    if (!pinned_arrives(5, -256, 496, pack(-256, 496), 0)) return fail("a corner on the band's edge is not a pinned one");
+    if (!pinned_arrives(6, 40, 130, pack(40, 130), 0)) return fail("a corner inside the band is not a pinned one");
+    if (!pinned_arrives(7, -700, 130, pack(-0xFF, 130), -1)) return fail("a word that is not the pinned projection created provenance");
+    if (!pinned_arrives(8, -700, 130, pack(-0x100, 131), -1)) return fail("a pinned column with another row created provenance");
+    if (!pinned_arrives(0, 900, 800, pack(0x240, 800), -1)) return fail("a word pinned on one side only created provenance");
+    return 0;
+}
+
 int test_scratch_twenty_routes_are_independent_one_shot() {
     reset_fixture();
     if (!add_capture(kOtherMfc2Pc) || !add_scratch_store())
@@ -998,6 +1049,7 @@ int main() {
     if (int rc = test_copy_snapshot_and_fail_closed_paths()) return rc;
     if (int rc = test_copy_speculation_replay_and_timeline()) return rc;
     if (int rc = test_scratch_nine_slots_and_fail_closed_domains()) return rc;
+    if (int rc = test_scratch_guard_band_keeps_the_projection()) return rc;
     if (int rc = test_scratch_twenty_routes_are_independent_one_shot()) return rc;
     if (int rc = test_scratch_replay_speculation_and_timeline()) return rc;
     if (int rc = test_perspective_depth_validity_propagates()) return rc;

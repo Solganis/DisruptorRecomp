@@ -61,6 +61,8 @@ void gpu_ws_tag_primitive(CPUState *, std::uint32_t primitive_addr,
     g_tags.emplace_back(primitive_addr, anchor_x);
 }
 
+void disruptor_sprite_depth_packet(CPUState *, std::uint32_t, std::uint32_t) {}
+
 }  // extern "C"
 
 // Include the implementation to exercise its exact private packet guards.

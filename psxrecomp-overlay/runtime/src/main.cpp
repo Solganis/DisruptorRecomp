@@ -1,4 +1,4 @@
-﻿/* main.cpp — Phase 3 runtime entry point.
+/* main.cpp — Phase 3 runtime entry point.
  *
  * Loads BIOS ROM, initializes CPU state + SDL display, calls into
  * the recompiled reset vector. BIOS drives execution; SDL presents
@@ -245,6 +245,14 @@ static int configure_disruptor_precision_store_routes(
         std::fprintf(stderr,
             "psxrecomp: failed to register Disruptor scratchpad SXY2 "
             "store route 0x80047A0C\n");
+        return 0;
+    }
+    /* 0x80047980..0x800479E0 pin x to -256..576 and y to -256..496 before that store. */
+    if (!gte_precision_scratch_store_pc_route_clamp(
+            0x80047A0Cu, 0xACAA0004u, -0x100, 0x240, -0x100, 0x1F0)) {
+        std::fprintf(stderr,
+            "psxrecomp: failed to register the guard band of Disruptor's "
+            "scratchpad SXY2 store route 0x80047A0C\n");
         return 0;
     }
     for (const PrecisionCopyRoute& route : copy_routes) {
@@ -1560,7 +1568,7 @@ extern "C" int psx_host_video_set_interpolation(int enabled,
 #else
     enabled = enabled ? 1 : 0;
     if (target_fps != -1 && target_fps != 0 &&
-        (target_fps < 60 || target_fps > 1000))
+        (target_fps < 30 || target_fps > 1000))
         return 0;
     if (blend_mode != PSX_MOD_FRAME_INTERPOLATION_LINEAR &&
         blend_mode != PSX_MOD_FRAME_INTERPOLATION_MOTION_ADAPTIVE &&
@@ -6577,18 +6585,8 @@ int main(int argc, char** argv) {
         if (us.has_low_latency_input) g_low_latency_input = us.low_latency_input ? 1 : 0;
         if (us.has_vsync)             g_video_vsync       = us.vsync;
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
-#if defined(DISRUPTOR_DEV_MENU)
-        /* Disruptor's in-game menu deliberately treats interpolation
-         * activation as session-only while geometry interpolation is
-         * experimental. A legacy settings.toml may still
-         * contain frame_interpolation=true from the generic launcher, but this
-         * game does not auto-restore it.  The explicit environment below
-         * remains available for one-run A/B testing. */
-        g_frame_interpolation = 0;
-#else
         if (us.has_frame_interpolation)
             g_frame_interpolation = us.frame_interpolation ? 1 : 0;
-#endif
         if (us.has_frame_interpolation_fps)
             g_frame_interpolation_fps = us.frame_interpolation_fps;
 #if defined(DISRUPTOR_DEV_MENU)
@@ -6758,7 +6756,7 @@ int main(int argc, char** argv) {
         g_frame_interpolation = atoi(e) ? 1 : 0;
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_FPS")) {
         int fps = atoi(e);
-        if (fps == 0 || fps >= 60) g_frame_interpolation_fps = fps;
+        if (fps == 0 || fps >= 30) g_frame_interpolation_fps = fps;
     }
     if (const char *e = std::getenv("PSX_FRAME_INTERPOLATION_BLEND")) {
         if (strcmp(e, "geometry") == 0 || strcmp(e, "2") == 0) {
@@ -6774,6 +6772,10 @@ int main(int argc, char** argv) {
         }
         g_frame_interpolation_blend = g_frame_interpolation_blend_default;
     }
+    /* Geometry in-between frames need exact geometry, as the live switch insists. */
+    if (g_frame_interpolation_blend == PSX_HOST_FRAME_INTERPOLATION_GEOMETRY &&
+        !g_geometry_correction)
+        g_frame_interpolation = 0;
 #endif
     {
         const char *mode_env = std::getenv("PSX_PARAPPA_TIMING_MODE");

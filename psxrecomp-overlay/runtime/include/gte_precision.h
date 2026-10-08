@@ -46,6 +46,11 @@ GtePrecisionLookupResult gte_precision_load_word_ex(
 GtePrecisionLookupResult gte_precision_load_perspective_word_ex(
     uint32_t addr, uint32_t packed, uint16_t *z);
 
+/* The GTE input vertex behind a projection: bit 63 set, then VZ, VY, VX as
+ * 16-bit fields. Zero means unknown. */
+GtePrecisionLookupResult gte_precision_load_identity(
+    uint32_t addr, uint32_t packed, uint64_t *identity);
+
 /* Retained boolean ABI used by older runtime code and out-of-tree modules. */
 int gte_precision_load_word(uint32_t addr, uint32_t packed,
                             int32_t *x16, int32_t *y16, uint16_t *z);
@@ -90,6 +95,11 @@ int gte_precision_scratch_store_pc_route_add(
     uint32_t store_pc, uint32_t instruction, uint8_t gte_reg,
     uint32_t scratch_first, uint32_t scratch_stride,
     uint32_t scratch_count);
+/* The route's stores may pin a coordinate into [low, high]: such a word keeps the projection it was pinned from. */
+int gte_precision_scratch_store_pc_route_clamp(
+    uint32_t store_pc, uint32_t instruction,
+    int16_t low_x, int16_t high_x, int16_t low_y, int16_t high_y);
+int gte_precision_word_clamped(uint32_t addr, uint32_t packed);
 void gte_precision_scratch_store_pc_word(
     uint32_t store_pc, uint32_t instruction,
     uint32_t addr, uint32_t packed);

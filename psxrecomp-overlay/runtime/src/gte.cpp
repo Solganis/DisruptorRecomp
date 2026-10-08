@@ -228,6 +228,8 @@ struct PreciseProjection {
     uint8_t valid;
     uint8_t saturated;
     uint8_t perspective_valid;
+    uint8_t clamped; /* packed is what the game pinned the projection to */
+    uint64_t identity;
 };
 static PreciseProjection s_precise_sxy[4] = {};
 
@@ -270,6 +272,8 @@ struct PrecisionScratchStorePcRoute {
     uint32_t scratch_stride;
     uint32_t scratch_count;
     uint8_t gte_reg;
+    uint8_t clamps;
+    int16_t low_x, high_x, low_y, high_y;
 };
 static PrecisionScratchStorePcRoute
     s_precision_scratch_store_pc_routes[
@@ -663,6 +667,32 @@ extern "C" int gte_precision_scratch_store_pc_route_add(
     return 1;
 }
 
+extern "C" int gte_precision_scratch_store_pc_route_clamp(
+        uint32_t store_pc, uint32_t instruction,
+        int16_t low_x, int16_t high_x, int16_t low_y, int16_t high_y) {
+    const uint32_t physical_pc = store_pc & 0x1FFFFFFFu;
+    if (low_x > high_x || low_y > high_y) return 0;
+    for (uint32_t i = 0; i < s_precision_scratch_store_pc_route_count; ++i) {
+        PrecisionScratchStorePcRoute &route = s_precision_scratch_store_pc_routes[i];
+        if (route.physical_pc != physical_pc || route.instruction != instruction) continue;
+        route.clamps = 1;
+        route.low_x = low_x; route.high_x = high_x;
+        route.low_y = low_y; route.high_y = high_y;
+        return 1;
+    }
+    return 0;
+}
+
+static uint32_t precision_scratch_route_clamp(
+        const PrecisionScratchStorePcRoute &route, uint32_t packed) {
+    int32_t x = (int16_t)(packed & 0xFFFFu), y = (int16_t)(packed >> 16);
+    if (x < route.low_x) x = route.low_x;
+    if (x > route.high_x) x = route.high_x;
+    if (y < route.low_y) y = route.low_y;
+    if (y > route.high_y) y = route.high_y;
+    return ((uint32_t)x & 0xFFFFu) | ((uint32_t)y << 16);
+}
+
 extern "C" int gte_precision_copy_pc_route_add(
         uint32_t load_pc, uint32_t load_instruction,
         uint32_t store_pc, uint32_t store_instruction, uint8_t gpr) {
@@ -854,7 +884,16 @@ extern "C" void gte_precision_scratch_store_pc_word(
     const PreciseProjection &projection = s_precision_mfc2_capture[index];
     if (!projection.valid) return;
     if (projection.packed != packed) {
-        ++s_precision_diagnostics.registered_store_packed_rejections;
+        /* A corner the game pinned to its guard band keeps the projection it was pinned from. */
+        if (!route->clamps || precision_scratch_route_clamp(*route, projection.packed) != packed) {
+            ++s_precision_diagnostics.registered_store_packed_rejections;
+            return;
+        }
+        PreciseProjection pinned = projection;
+        pinned.packed = packed;
+        pinned.clamped = 1;
+        precision_store_projection(physical, pinned);
+        ++s_precision_diagnostics.registered_store_accepts;
         return;
     }
     precision_store_projection(physical, projection);
@@ -964,6 +1003,22 @@ extern "C" GtePrecisionLookupResult gte_precision_load_perspective_word_ex(
         return GTE_PRECISION_LOOKUP_PERSPECTIVE_INVALID;
     if (z) *z = projection->z;
     return GTE_PRECISION_LOOKUP_ACCEPTED;
+}
+
+extern "C" GtePrecisionLookupResult gte_precision_load_identity(
+        uint32_t addr, uint32_t packed, uint64_t *identity) {
+    const PreciseProjection *projection = nullptr;
+    const GtePrecisionLookupResult result =
+        precision_lookup_projection(addr, packed, &projection);
+    if (identity)
+        *identity = result == GTE_PRECISION_LOOKUP_ACCEPTED ? projection->identity : 0u;
+    return result;
+}
+
+extern "C" int gte_precision_word_clamped(uint32_t addr, uint32_t packed) {
+    const PreciseProjection *projection = nullptr;
+    return precision_lookup_projection(addr, packed, &projection) == GTE_PRECISION_LOOKUP_ACCEPTED &&
+           projection->clamped;
 }
 
 extern "C" int gte_precision_load_word(uint32_t addr, uint32_t packed,
@@ -1518,6 +1573,10 @@ void gte_rtps_internal(GTEState* gte, int16_t* V, bool setMac0) {
         s_precise_sxy[2].y16 = (int32_t)sy16;
         s_precise_sxy[2].z = gte->SZ[3];
         s_precise_sxy[2].valid = 1;
+        s_precise_sxy[2].identity = UINT64_C(0x8000000000000000) |
+            static_cast<uint64_t>(static_cast<uint16_t>(V[0])) |
+            static_cast<uint64_t>(static_cast<uint16_t>(V[1])) << 16 |
+            static_cast<uint64_t>(static_cast<uint16_t>(V[2])) << 32;
         s_precise_sxy[2].saturated =
             static_cast<int16_t>(gte->SXY[2] & 0xFFFF) != sx ||
             static_cast<int16_t>((uint32_t)gte->SXY[2] >> 16) != sy;

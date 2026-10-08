@@ -16,6 +16,9 @@ set(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp" CACHE PATH
 option(DISRUPTOR_DEV_MENU
     "Build the in-game Disruptor settings menu"
     ON)
+option(DISRUPTOR_FRAME_INTERPOLATION
+    "Build the experimental presentation-only frame interpolator"
+    ON)
 
 set(DISRUPTOR_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_backdrop_tiles.cpp"
@@ -23,8 +26,11 @@ set(DISRUPTOR_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_cheats.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_control_probe.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_far_rendering.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_frame_rate.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_mouse_aim.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_render_arena.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_grown_quad.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_sprite_depth.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_vertical_camera.cpp")
 
 # The project deliberately uses the redistributable OpenBIOS backend only.
@@ -70,6 +76,10 @@ if(DISRUPTOR_DEV_MENU)
 
     list(APPEND DISRUPTOR_EXTRA_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_dev_menu.cpp")
+    if(DISRUPTOR_FRAME_INTERPOLATION)
+        list(APPEND DISRUPTOR_EXTRA_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/disruptor_present_rate.cpp")
+    endif()
 endif()
 
 file(GLOB GAME_GENERATED_FULL CONFIGURE_DEPENDS
@@ -107,13 +117,18 @@ psxrecomp_add_runtime_target(psx-runtime
     EXE_NAME "DisruptorRecompiled"
 )
 target_compile_definitions(psx-runtime PRIVATE
-    # Keep the experimental sources available, but compile out frame blending,
-    # temporal capture and the high-refresh presenter for this title for now.
-    PSX_DISABLE_FRAME_INTERPOLATION=1
     PSX_HAS_DISRUPTOR_BACKDROP_TILES=1
     PSX_HAS_DISRUPTOR_BILLBOARD_ASPECT=1
     PSX_HAS_DISRUPTOR_FAR_RENDERING=1
+    PSX_HAS_DISRUPTOR_SPRITE_DEPTH=1
+    PSX_HAS_DISRUPTOR_GROWN_QUAD=1
     PSX_HAS_DISRUPTOR_VERTICAL_CAMERA=1)
+if(NOT DISRUPTOR_FRAME_INTERPOLATION)
+    target_compile_definitions(psx-runtime PRIVATE
+        # Keep the experimental sources available, but compile out frame
+        # blending, temporal capture and the high-refresh presenter by default.
+        PSX_DISABLE_FRAME_INTERPOLATION=1)
+endif()
 if(DISRUPTOR_DEV_MENU)
     target_compile_definitions(psx-runtime PRIVATE DISRUPTOR_DEV_MENU=1)
     target_link_libraries(psx-runtime PRIVATE disruptor-imgui)
@@ -137,7 +152,8 @@ if(BUILD_TESTING)
 
     add_test(NAME disruptor_backdrop_tiles_contract
         COMMAND "${Python3_EXECUTABLE}" -B
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backdrop_tiles_contract.py")
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backdrop_tiles_contract.py"
+            --require-artifacts)
 
     add_test(NAME disruptor_geometry_provenance_contract
         COMMAND "${Python3_EXECUTABLE}" -B
@@ -167,9 +183,23 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_far_rendering_contract.py")
 
+    add_test(NAME disruptor_temporal_presenter_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_temporal_presenter_contract.py")
+
     add_test(NAME disruptor_hud_scale_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hud_scale_contract.py")
+
+    add_test(NAME disruptor_grown_quad_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_grown_quad_contract.py"
+            --require-artifacts)
+
+    add_test(NAME disruptor_frame_rate_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_frame_rate_contract.py"
+            --require-artifacts)
 
     add_test(NAME disruptor_billboard_aspect_contract
         COMMAND "${Python3_EXECUTABLE}" -B
@@ -242,15 +272,55 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         tests/gpu_ws_hud_scale_test.cpp)
     target_include_directories(disruptor-gpu-ws-hud-scale-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
-    target_compile_features(disruptor-gpu-ws-hud-scale-test PRIVATE cxx_std_17)
+    target_compile_features(disruptor-gpu-ws-hud-scale-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_gpu_ws_hud_scale
         COMMAND disruptor-gpu-ws-hud-scale-test)
+
+    add_executable(disruptor-frame-rate-test
+        tests/disruptor_frame_rate_test.cpp)
+    target_include_directories(disruptor-frame-rate-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-frame-rate-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_frame_rate
+        COMMAND disruptor-frame-rate-test)
+
+    add_executable(disruptor-present-rate-test
+        tests/disruptor_present_rate_test.cpp)
+    target_include_directories(disruptor-present-rate-test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/present_rate_fakes")
+    target_compile_features(disruptor-present-rate-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_present_rate
+        COMMAND disruptor-present-rate-test)
+
+    add_executable(disruptor-grown-quad-test
+        tests/disruptor_grown_quad_test.cpp)
+    target_include_directories(disruptor-grown-quad-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-grown-quad-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_grown_quad
+        COMMAND disruptor-grown-quad-test)
+
+    add_executable(disruptor-sprite-depth-test
+        tests/disruptor_sprite_depth_test.cpp)
+    target_include_directories(disruptor-sprite-depth-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-sprite-depth-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_sprite_depth
+        COMMAND disruptor-sprite-depth-test)
 
     add_executable(disruptor-billboard-aspect-test
         tests/disruptor_billboard_aspect_test.cpp)
     target_include_directories(disruptor-billboard-aspect-test PRIVATE
         "${PSXRECOMP_ROOT}/runtime/include")
     target_compile_features(disruptor-billboard-aspect-test PRIVATE cxx_std_20)
+
+    add_executable(disruptor-gpu-temporal-sprite-test
+        tests/gpu_temporal_sprite_test.cpp)
+    target_include_directories(disruptor-gpu-temporal-sprite-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-temporal-sprite-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_gpu_temporal_sprite
+        COMMAND disruptor-gpu-temporal-sprite-test)
 
     add_executable(disruptor-gpu-ws-tag-match-test
         tests/gpu_ws_tag_match_test.cpp)

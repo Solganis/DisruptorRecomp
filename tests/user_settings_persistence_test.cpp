@@ -77,8 +77,12 @@ int main() {
         written.geometry_correction = true;
         written.has_perspective_textures = true;
         written.perspective_textures = true;
+        written.has_frame_unlock = true;
+        written.frame_unlock = true;
         written.has_hud_scale = true;
         written.hud_scale = 70;
+        written.has_improved_shadows = true;
+        written.improved_shadows = true;
         written.has_language = true;
         written.language = "en";
 
@@ -122,7 +126,9 @@ int main() {
                     loaded.geometry_correction &&
                     loaded.has_perspective_textures &&
                     loaded.perspective_textures &&
-                    loaded.has_hud_scale && loaded.hud_scale == 70,
+                    loaded.has_frame_unlock && loaded.frame_unlock &&
+                    loaded.has_hud_scale && loaded.hud_scale == 70 &&
+                    loaded.has_improved_shadows && loaded.improved_shadows,
                 "Disruptor preferences did not round-trip");
         require(loaded.has_language && loaded.language == "en",
                 "merge-save dropped an unrelated known setting");
@@ -212,6 +218,26 @@ int main() {
             require(!PSXRecompV4::load_user_settings(interpolation)
                          .has_frame_interpolation_blend,
                     "invalid interpolation mode was saved");
+        }
+
+        for (const int rate : {0, 30, 45, 120}) {
+            UserSettings preference;
+            preference.has_frame_interpolation_fps = true;
+            preference.frame_interpolation_fps = rate;
+            require(PSXRecompV4::save_user_settings(interpolation, preference),
+                    "in-between frame rate save failed");
+            const UserSettings roundtrip = PSXRecompV4::load_user_settings(interpolation);
+            require(roundtrip.has_frame_interpolation_fps && roundtrip.frame_interpolation_fps == rate,
+                    "an in-between frame rate from 30 FPS, or 0 for the display, did not round-trip");
+        }
+        for (const int rate : {-1, 1, 29}) {
+            {
+                std::ofstream out(interpolation, std::ios::trunc);
+                out << "[video]\nframe_interpolation_fps = " << rate << "\n";
+            }
+            const UserSettings rejected = PSXRecompV4::load_user_settings(interpolation);
+            require(!rejected.parse_error && !rejected.has_frame_interpolation_fps,
+                    "an in-between frame rate under 30 FPS was accepted on load");
         }
 
         const fs::path invalid = root / "invalid.toml";

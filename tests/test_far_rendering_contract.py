@@ -38,7 +38,7 @@ require("PSX_HAS_DISRUPTOR_FAR_RENDERING=1" in cmake,
 # The far renderer shares the already-generated renderer-entry fan-out.  A
 # second config entry would emit a duplicate guest callback.
 require(configs.count(
-    'mod_function_entry_funcs = ["0x80020DD8", "0x80040E68"]') == 2,
+    'mod_function_entry_funcs = ["0x80020DD8", "0x80040E68", "0x8004B3D4"]') == 2,
     "both configs must retain exactly one audited renderer-entry seam")
 require("disruptor.far_rendering.renderer" in source and
         "psx_mod_register_function_entry_plugin" in source and

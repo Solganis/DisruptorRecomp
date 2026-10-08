@@ -10,7 +10,9 @@
 #include "disruptor_cheats.h"
 #include "disruptor_billboard_aspect.h"
 #include "disruptor_far_rendering.h"
+#include "disruptor_frame_rate.h"
 #include "disruptor_mouse_aim.h"
+#include "disruptor_present_rate.h"
 #include "config_loader.h"
 #include "gpu.h"
 #include "host_ui.h"
@@ -74,6 +76,10 @@ enum PreferenceDirty : uint32_t {
     PREF_MASTER_VOLUME     = 1u << 16,
     PREF_AUDIO_MUTED       = 1u << 17,
     PREF_HUD_SCALE         = 1u << 18,
+    PREF_FRAME_UNLOCK      = 1u << 19,
+    PREF_SHADOW_SHAPE      = 1u << 20,
+    PREF_PRESENT_RATE      = 1u << 21,
+    PREF_PRESENT_ENABLED   = 1u << 23,
 };
 
 struct PreferenceState {
@@ -265,6 +271,30 @@ void mark_hud_scale(int value) {
     g_preferences.dirty |= PREF_HUD_SCALE;
 }
 
+void mark_frame_unlock(bool value) {
+    g_preferences.pending.has_frame_unlock = true;
+    g_preferences.pending.frame_unlock = value;
+    g_preferences.dirty |= PREF_FRAME_UNLOCK;
+}
+
+void mark_shadow_shape(bool improved) {
+    g_preferences.pending.has_improved_shadows = true;
+    g_preferences.pending.improved_shadows = improved;
+    g_preferences.dirty |= PREF_SHADOW_SHAPE;
+}
+
+void mark_present_rate(int value) {
+    g_preferences.pending.has_frame_interpolation_fps = true;
+    g_preferences.pending.frame_interpolation_fps = value;
+    g_preferences.dirty |= PREF_PRESENT_RATE;
+}
+
+void mark_present_enabled(bool value) {
+    g_preferences.pending.has_frame_interpolation = true;
+    g_preferences.pending.frame_interpolation = value;
+    g_preferences.dirty |= PREF_PRESENT_ENABLED;
+}
+
 void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     const auto &pending = g_preferences.pending;
     if (g_preferences.dirty & PREF_MOUSE_AIM) {
@@ -333,6 +363,22 @@ void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     if (g_preferences.dirty & PREF_HUD_SCALE) {
         settings.has_hud_scale = true;
         settings.hud_scale = pending.hud_scale;
+    }
+    if (g_preferences.dirty & PREF_FRAME_UNLOCK) {
+        settings.has_frame_unlock = true;
+        settings.frame_unlock = pending.frame_unlock;
+    }
+    if (g_preferences.dirty & PREF_SHADOW_SHAPE) {
+        settings.has_improved_shadows = true;
+        settings.improved_shadows = pending.improved_shadows;
+    }
+    if (g_preferences.dirty & PREF_PRESENT_RATE) {
+        settings.has_frame_interpolation_fps = true;
+        settings.frame_interpolation_fps = pending.frame_interpolation_fps;
+    }
+    if (g_preferences.dirty & PREF_PRESENT_ENABLED) {
+        settings.has_frame_interpolation = true;
+        settings.frame_interpolation = pending.frame_interpolation;
     }
 }
 
@@ -431,6 +477,11 @@ void apply_saved_preferences(const PSXRecompV4::UserSettings &settings) {
     if (settings.has_audio_muted)
         (void)psx_host_audio_set_muted(settings.audio_muted ? 1 : 0);
     if (settings.has_hud_scale) gpu_ws_set_hud_scale(settings.hud_scale);
+    if (settings.has_frame_unlock &&
+        !env_override_present("PSX_DISRUPTOR_FRAME_UNLOCK"))
+        disruptor_frame_rate_set_unlocked(settings.frame_unlock ? 1 : 0);
+    if (settings.has_improved_shadows && !env_override_present("PSX_DISRUPTOR_IMPROVED_SHADOWS"))
+        gpu_set_shadow_shape(settings.improved_shadows ? 1 : 0);
 }
 
 void apply_pending_preferences() {
@@ -481,6 +532,16 @@ void apply_pending_preferences() {
         (void)psx_host_audio_set_muted(pending.audio_muted ? 1 : 0);
     if (g_preferences.dirty & PREF_HUD_SCALE)
         gpu_ws_set_hud_scale(pending.hud_scale);
+    if (g_preferences.dirty & PREF_FRAME_UNLOCK)
+        disruptor_frame_rate_set_unlocked(pending.frame_unlock ? 1 : 0);
+    if (g_preferences.dirty & PREF_SHADOW_SHAPE)
+        gpu_set_shadow_shape(pending.improved_shadows ? 1 : 0);
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    if (g_preferences.dirty & PREF_PRESENT_ENABLED)
+        (void)disruptor_present_rate_enable(pending.frame_interpolation ? 1 : 0);
+    if (g_preferences.dirty & PREF_PRESENT_RATE)
+        (void)disruptor_present_rate_apply(pending.frame_interpolation_fps);
+#endif
 }
 
 void load_preferences_for_session() {
@@ -707,6 +768,12 @@ void apply_geometry_enabled(bool enabled) {
         gpu_texture_correction_set(0);
         mark_textures(false);
     }
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    if (!enabled) {
+        (void)disruptor_present_rate_enable(0);
+        mark_present_enabled(false);
+    }
+#endif
     gpu_geometry_correction_set(enabled ? 1 : 0);
     mark_geometry(enabled);
 }
@@ -792,6 +859,19 @@ void draw_aspect_controls() {
         "live window matching (capped at 32:9) apply after the current "
         "frame and are saved.");
 
+    if (gpu_sprite_placement_available()) {
+        int shadow_shape = gpu_shadow_shape();
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::Combo("Shadows", &shadow_shape, "Vanilla\0Improved\0")) {
+            gpu_set_shadow_shape(shadow_shape);
+            mark_shadow_shape(shadow_shape != 0);
+        }
+        draw_status_badge("LIVE", ImVec4(0.35f, 0.90f, 0.45f, 1.0f));
+        ImGui::TextDisabled(
+            "Improved lays a shadow flat on the floor: as wide as the game makes it and as tall "
+            "as the floor's perspective gives. Works with geometry correction on.");
+    }
+
     int hud_scale = gpu_ws_hud_scale();
     ImGui::SetNextItemWidth(260.0f);
     if (ImGui::SliderInt("HUD size", &hud_scale, 50, 100, "%d%%",
@@ -862,6 +942,31 @@ void draw_enhancements_tab() {
         const int requested = vsync_index - 1;
         if (psx_host_video_set_vsync(requested)) mark_vsync(requested);
     }
+
+    bool unlocked = disruptor_frame_rate_unlocked() != 0;
+    if (ImGui::Checkbox("60 FPS gameplay (experimental)", &unlocked)) {
+        disruptor_frame_rate_set_unlocked(unlocked ? 1 : 0);
+        mark_frame_unlock(unlocked);
+    }
+    draw_status_badge("LIVE", ImVec4(0.35f, 0.90f, 0.45f, 1.0f));
+    DisruptorFrameRateWindow window{};
+    if (disruptor_frame_rate_last_window(&window) && window.vblanks != 0u) {
+        ImGui::TextDisabled(
+            "Game frames: %.1f per second. Frame work: %.2f VBlank average, "
+            "%.2f peak, %u of %u frames over one VBlank.",
+            59.94 * window.frames / window.vblanks,
+            window.average_work_permille / 1000.0,
+            window.peak_work_permille / 1000.0,
+            window.late_frames, window.frames);
+    }
+
+#ifndef PSX_DISABLE_FRAME_INTERPOLATION
+    int present_enabled = 0;
+    if (disruptor_present_rate_switch(geometry ? 1 : 0, &present_enabled))
+        mark_present_enabled(present_enabled != 0);
+    int present_rate = 0;
+    if (disruptor_present_rate_control(&present_rate)) mark_present_rate(present_rate);
+#endif
 }
 
 const char *cheat_result_message(int result, const char *success) {

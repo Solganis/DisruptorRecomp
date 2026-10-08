@@ -1618,6 +1618,22 @@ static int disruptor_billboard_aspect_site(uint32_t pc, uint32_t insn) {
 }
 #endif
 
+#ifdef PSX_HAS_DISRUPTOR_SPRITE_DEPTH
+extern void disruptor_sprite_depth_instruction_hook(
+    CPUState *cpu, uint32_t address, uint32_t instruction, int phase);
+
+static int disruptor_sprite_depth_site(uint32_t pc, uint32_t insn) {
+    switch (pc) {
+    case 0x8003B98Cu: case 0x8003BDA0u: case 0x8003C4B0u: case 0x8003D078u:
+        return insn == 0xAFA20010u;
+    case 0x8003D1B4u:
+        return insn == 0xA4379EA0u;
+    default:
+        return 0;
+    }
+}
+#endif
+
 #ifdef PSX_HAS_DISRUPTOR_BACKDROP_TILES
 extern void disruptor_backdrop_tiles_instruction_hook(
     CPUState *cpu, uint32_t address, uint32_t instruction, int phase);
@@ -1708,6 +1724,12 @@ static int exec_one_fetched(CPUState *cpu, uint32_t pc, uint32_t insn,
 #ifdef PSX_HAS_DISRUPTOR_BILLBOARD_ASPECT
     if (disruptor_billboard_aspect_site(pc, insn)) {
         disruptor_billboard_aspect_instruction_hook(cpu, pc, insn, 1);
+    }
+#endif
+
+#ifdef PSX_HAS_DISRUPTOR_SPRITE_DEPTH
+    if (disruptor_sprite_depth_site(pc, insn)) {
+        disruptor_sprite_depth_instruction_hook(cpu, pc, insn, 1);
     }
 #endif
 

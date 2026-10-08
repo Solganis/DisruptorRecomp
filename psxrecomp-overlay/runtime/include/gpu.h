@@ -1,4 +1,4 @@
-﻿/* gpu.h — PS1 GPU hardware simulation (Phase 3).
+/* gpu.h — PS1 GPU hardware simulation (Phase 3).
  *
  * Implements GPUSTAT, GP0, GP1, and 1024x512 16-bit VRAM.
  * No rendering to screen — just correct hardware state transitions.
@@ -258,6 +258,19 @@ void gpu_ws_configure(int aspect_num, int aspect_den,
 /* Add an audited world primitive to the existing classic-squash provenance
  * table.  This is host presentation metadata only; it never edits guest RAM.
  * Calls are ignored outside an active classic-wide gameplay presentation. */
+/* Camera depth of a CPU-projected POLY_FT4 sprite, for frame interpolation. */
+void gpu_temporal_note_sprite(CPUState *cpu, uint32_t primitive_addr,
+                              int32_t depth);
+/* The unrounded centre column of the sprite just noted and its distance from its row, 16.16. */
+void gpu_temporal_place_sprite(uint32_t primitive_addr, int32_t centre_x16, int32_t offset_y16);
+/* The unrounded row the placed sprite is centred on and its unrounded sides, 16.16. A shadow lies on the floor.
+ * whole: the packet spans the size cut to whole pixels, not one less. */
+void gpu_temporal_size_sprite(uint32_t primitive_addr, int32_t row16, int32_t width16, int32_t height16,
+                              int shadow, int whole);
+/* Shadows as the game shapes them (0) or flattened the way the floor recedes (1). */
+void gpu_set_shadow_shape(int improved);
+int gpu_shadow_shape(void);
+int gpu_sprite_placement_available(void);
 void gpu_ws_tag_primitive(CPUState *cpu, uint32_t primitive_addr,
                           int32_t anchor_x);
 /* Mark a completed, audited SPRT packet as a backdrop tile laid out edge to
@@ -468,6 +481,7 @@ int  psx_ws_backdrop_x(int x);
 /* CPU-calculated perspective X counterpart to the GTE widescreen squash.
  * Exact game sites use this only for final projected screen coordinates. */
 int  psx_ws_project_x(int x);
+int32_t psx_ws_project_x16(int x, int32_t fraction16);
 
 /* Backdrop PRELOAD ([widescreen.cull] auto_backdrop). psx_ws_backdrop_preload()
  * is nonzero only while native-wide widescreen is engaged (0 at 4:3 / boot /
