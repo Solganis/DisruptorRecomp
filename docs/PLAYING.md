@@ -48,9 +48,9 @@ Modern mouse/keyboard controls, geometry correction, and perspective textures
 are enabled initially. Vertical mouse look is experimental and starts off;
 enable it in **Settings → Controls** if desired.
 
-**Settings → Enhancements** offers 1x–8x resolution, widescreen options, and
-experimental 60 FPS gameplay and in-between frames. In-between frames need
-exact geometry.
+**Settings → Enhancements** offers 1x–8x resolution, widescreen options,
+HUD size for widescreen, and experimental 60 FPS gameplay and in-between
+frames. In-between frames need exact geometry.
 The default is 4x at 4:3; lower the scale if performance is poor. Menus and
 movies remain at 4:3. Controls, display, and audio preferences are saved in
 `settings.toml` beside the executable.
