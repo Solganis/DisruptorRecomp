@@ -281,6 +281,11 @@ int32_t gpu_ws_widen_x(int32_t x, int round_up);
 /* Size of the widescreen HUD in percent, 50 to 100. 100 is the authored size. */
 void gpu_ws_set_hud_scale(int percent);
 int gpu_ws_hud_scale(void);
+/* HUD widgets of a game that links its HUD to `layers` nodes just below its ordering table, whose address
+ * is the guest word at `table_pointer`: six numbers each, the box x0, y0, x1, y1 and the pivot x, y. Once
+ * such a layer has shown a widget, later rectangles inside its box belong to it too, until the game sets
+ * its next drawing area. The game has to set one every frame. */
+void gpu_ws_set_hud_widgets(uint32_t table_pointer, int layers, const int32_t *boxes, int count);
 /* [widescreen] full_2d: opt a pure-2D sprite game into the widescreen present
  * path (treat every in-game frame as gameplay, since it never tags 3D prims). */
 void gpu_ws_set_full_2d(int on);
