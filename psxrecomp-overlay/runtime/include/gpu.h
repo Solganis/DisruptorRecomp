@@ -346,6 +346,10 @@ int  ws_nw_extra(void);
  * full-2D menu/title screen), so the squash is suppressed and content drawn
  * pixel-native. The present path uses the same predicate to pillarbox. */
 int  gpu_ws_present_native_43(void);
+/* The same for the frame on display, which a double-buffered game drew a frame earlier. */
+int  gpu_ws_displayed_native_43(void);
+/* A game says what the frame it begins to build is, before it culls or projects for it: 1 a full-2D screen, 0 a world. */
+void gpu_ws_tell_frame_kind(int flat);
 /* Per-side X cull-margin (screen/world units) emitted into the game's draw-
  * cull immediates by the recompiler ([widescreen.cull]); 0 unless stretching. */
 int  psx_ws_x_margin(void);

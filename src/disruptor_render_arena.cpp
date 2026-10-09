@@ -2,8 +2,15 @@
  * arenas. The second arena is immediately followed by texture descriptors;
  * spilling packets into those descriptors corrupts subsequent frames.
  * Relocate only the audited renderer's arena roots, using the framework's
- * opt-in memory that survives the GPU's 24-bit linked-list tags. */
+ * opt-in memory that survives the GPU's 24-bit linked-list tags.
+ *
+ * The same renderer draws the map, without a world, and has to draw it from
+ * the retail arena: from the moved one the map's text comes out as noise. So
+ * the map keeps the retail arena whatever the margin says. And the renderer
+ * culls and fills its arena before it projects anything, so the widescreen
+ * layer is told here what the frame is going to be. */
 #include "cpu_state.h"
+#include "gpu.h"
 #include "lockstep.h"
 #include "mod_plugins.h"
 #include "mod_memory.h"
@@ -13,6 +20,8 @@
 
 namespace {
 constexpr uint32_t kRendererEntry = 0x80040E68u;
+constexpr uint32_t kScreen = 0x8007145Cu;  /* gp + 0x310, the renderer skips the world at 0x800410E0 when it is 1 */
+constexpr uint8_t kMapScreen = 1u;
 constexpr uint32_t kContexts[2] = {0x80074458u, 0x80074E50u};
 constexpr uint32_t kOriginalRoots[2] = {0x800776BCu, 0x800776C0u};
 constexpr uint32_t kArenaOffset = 0x70u;
@@ -22,6 +31,8 @@ uint32_t g_arena_base = 0;
 
 void renderer_entry(CPUState *cpu, uint32_t address) {
     if (!cpu || address != kRendererEntry || !psx_mod_game_started()) return;
+    const bool map = psx_mod_read_byte(kScreen) == kMapScreen;
+    gpu_ws_tell_frame_kind(map);  /* before the margin below is read */
     unsigned index;
     for (index = 0; index < 2u; ++index)
         if (cpu->gpr[4] == kContexts[index]) break;
@@ -43,7 +54,7 @@ void renderer_entry(CPUState *cpu, uint32_t address) {
         g_arena_base + index * kArenaBytes : 0u;
     if (current != original && current != relocated) return;
 
-    if (g_ls_mode || g_ls_replay_active || psx_netplay_active() ||
+    if (g_ls_mode || g_ls_replay_active || psx_netplay_active() || map ||
         psx_mod_widescreen_x_margin() == 0) {
         if (current == relocated && relocated)
             psx_mod_write_word(root_address, original);
