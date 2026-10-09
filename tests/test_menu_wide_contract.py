@@ -48,7 +48,7 @@ require(
     "    psx_ws_menu_keep_logo(picture, PSX_WS_MENU_WORDS, palette, mask, ws_menu_kept);\n"
     "    gr_vram_transfer_in(PSX_WS_MENU_KEPT_X, 0, PSX_WS_MENU_LOGO_WIDE, PSX_WS_MENU_LOGO_ROWS, ws_menu_kept);\n"
     in take
-    and "    psx_ws_menu_paint(picture, PSX_WS_MENU_WORDS, palette, mask, nearest);\n"
+    and "    psx_ws_menu_paint(picture, PSX_WS_MENU_WORDS, mask);\n"
     "    memcpy(ws_menu_painted, &picture[PSX_WS_MENU_LOGO_TOP * PSX_WS_MENU_WORDS], sizeof(ws_menu_painted));\n"
     "    gr_vram_transfer_in(PSX_WS_MENU_X, PSX_WS_MENU_LOGO_TOP, PSX_WS_MENU_WORDS, PSX_WS_MENU_LOGO_ROWS, ws_menu_painted);\n"
     "    ws_menu_logo = ws_menu_lent = ws_menu_rows = 1;\n}"

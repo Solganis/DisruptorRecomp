@@ -2531,9 +2531,6 @@ static void ws_menu_yield(int x, int y, int w, int h, int written) {
 static void ws_menu_take_picture(void) {
     static uint8_t mask[PSX_WS_MENU_LOGO_ROWS * PSX_WS_MENU_LOGO_WIDE];
     static uint16_t picture[PSX_WS_MENU_HIGH * PSX_WS_MENU_WORDS];
-    static int16_t nearest[PSX_WS_MENU_NEAREST];
-    static uint16_t nearest_of[256];
-    static int nearest_known;
     const uint16_t *palette = ws_menu_palette();
     if (!ws_menu_fresh || !ws_menu_wanted()) {
         ws_menu_give_back();
@@ -2545,12 +2542,7 @@ static void ws_menu_take_picture(void) {
     psx_ws_menu_logo_mask(picture, PSX_WS_MENU_WORDS, palette, mask);
     psx_ws_menu_keep_logo(picture, PSX_WS_MENU_WORDS, palette, mask, ws_menu_kept);
     gr_vram_transfer_in(PSX_WS_MENU_KEPT_X, 0, PSX_WS_MENU_LOGO_WIDE, PSX_WS_MENU_LOGO_ROWS, ws_menu_kept);
-    if (!nearest_known || memcmp(nearest_of, palette, sizeof(nearest_of)) != 0) { /* the table is of one palette */
-        nearest_known = 1;
-        memcpy(nearest_of, palette, sizeof(nearest_of));
-        memset(nearest, 0xFF, sizeof(nearest));
-    }
-    psx_ws_menu_paint(picture, PSX_WS_MENU_WORDS, palette, mask, nearest);
+    psx_ws_menu_paint(picture, PSX_WS_MENU_WORDS, mask);
     memcpy(ws_menu_painted, &picture[PSX_WS_MENU_LOGO_TOP * PSX_WS_MENU_WORDS], sizeof(ws_menu_painted));
     gr_vram_transfer_in(PSX_WS_MENU_X, PSX_WS_MENU_LOGO_TOP, PSX_WS_MENU_WORDS, PSX_WS_MENU_LOGO_ROWS, ws_menu_painted);
     ws_menu_logo = ws_menu_lent = ws_menu_rows = 1;

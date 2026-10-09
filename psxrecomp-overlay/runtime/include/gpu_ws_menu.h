@@ -13,18 +13,18 @@ enum {
     PSX_WS_MENU_WORDS = 160,
     PSX_WS_MENU_WIDE = 320,
     PSX_WS_MENU_HIGH = 240,
-    PSX_WS_MENU_LOGO_LEFT = 59, /* measured on the US disc: the logo and its shadow stand in columns 61..263 and rows 17..48 */
+    PSX_WS_MENU_LOGO_LEFT = 59, /* measured on the US disc over twelve scenes: the logo's own colours stand in columns 61..263 and rows 16..48 */
     PSX_WS_MENU_LOGO_RIGHT = 266,
     PSX_WS_MENU_LOGO_TOP = 15,
     PSX_WS_MENU_LOGO_BOTTOM = 51,
     PSX_WS_MENU_LOGO_WIDE = PSX_WS_MENU_LOGO_RIGHT - PSX_WS_MENU_LOGO_LEFT,
     PSX_WS_MENU_LOGO_ROWS = PSX_WS_MENU_LOGO_BOTTOM - PSX_WS_MENU_LOGO_TOP,
-    PSX_WS_MENU_LOGO_LEAST = 2500, /* of the 3864 texels of its own colours the logo has there */
+    PSX_WS_MENU_LOGO_LEAST = 2500, /* of the 3767..3902 texels of its own colours the logo has there, as its streak glints */
     PSX_WS_MENU_KEPT_X = 512,      /* empty in the front end and in play: measured in both */
     PSX_WS_MENU_KEPT_PAGE = (PSX_WS_MENU_KEPT_X / 64) | (2 << 7), /* colours as they are, no palette */
-    PSX_WS_MENU_SHADOW = 3,        /* how far from its own colours the logo's edge reaches */
-    PSX_WS_MENU_PAINT_FROM = 4,    /* rows above and below the logo's that the paint is mixed from */
-    PSX_WS_MENU_NEAREST = 32 * 32 * 32, /* a palette entry per colour of five bits a part */
+    PSX_WS_MENU_HALO = 2,          /* the logo's shadow and outline are within two texels of its own colours in every scene */
+    PSX_WS_MENU_TAIL_TOP = 29,     /* the three rows where the streak and its shadow run on past the letters, half clear, to the box's right edge */
+    PSX_WS_MENU_TAIL_ROWS = 3,
 };
 
 /* Which half of the backdrop a textured rectangle is: 1 the left, 2 the right, 0 neither. */
@@ -44,16 +44,10 @@ static inline void psx_ws_menu_set_texel(uint16_t *picture, int stride, int x, i
     *word = (x & 1) ? (uint16_t)((*word & 0x00FF) | (index << 8)) : (uint16_t)((*word & 0xFF00) | index);
 }
 
-/* The logo is red, white and grey. The scenes behind it are green and dark: none of their 45 colours in fourteen pictures passes this. */
+/* The logo is red, white and grey. The scenes behind it are green and dark in each of their three palettes: no texel of twelve scenes outside the logo's box passes this. */
 static inline int psx_ws_menu_logo_colour(uint16_t colour) {
     const int red = colour & 31, green = (colour >> 5) & 31, blue = (colour >> 10) & 31;
     return red > green || (red == green && blue >= green - 1 && red + green + blue > 12);
-}
-
-/* What the logo's edge is made of where it is not its own colours: its dark shadow, and its glint, at most one step greener than red or bluer than green. */
-static inline int psx_ws_menu_edge_colour(uint16_t colour) {
-    const int red = colour & 31, green = (colour >> 5) & 31, blue = (colour >> 10) & 31;
-    return red + green + blue <= 12 || (red >= green - 1 && blue <= green + 1);
 }
 
 /* Whether the picture is the front end's: the logo stands where it always stands. */
@@ -65,7 +59,7 @@ static inline int psx_ws_menu_has_logo(const uint16_t *picture, int stride, cons
     return count >= PSX_WS_MENU_LOGO_LEAST;
 }
 
-/* Marks the logo's texels in its box, PSX_WS_MENU_LOGO_WIDE a row: 1 for its own colours, 2 for its edge beside them. */
+/* Marks the texels the logo is lifted from in its box, PSX_WS_MENU_LOGO_WIDE a row: 1 for its own colours, 2 for what is beside them, whatever its colour, and for the streak's tail. */
 static inline void psx_ws_menu_logo_mask(const uint16_t *picture, int stride, const uint16_t *palette, uint8_t *mask) {
     for (int y = 0; y < PSX_WS_MENU_LOGO_ROWS; ++y)
         for (int x = 0; x < PSX_WS_MENU_LOGO_WIDE; ++x)
@@ -74,14 +68,19 @@ static inline void psx_ws_menu_logo_mask(const uint16_t *picture, int stride, co
     for (int y = 0; y < PSX_WS_MENU_LOGO_ROWS; ++y)
         for (int x = 0; x < PSX_WS_MENU_LOGO_WIDE; ++x) {
             uint8_t *one = &mask[y * PSX_WS_MENU_LOGO_WIDE + x];
-            if (*one || !psx_ws_menu_edge_colour(palette[psx_ws_menu_texel(picture, stride, PSX_WS_MENU_LOGO_LEFT + x, PSX_WS_MENU_LOGO_TOP + y)])) continue;
-            for (int dy = -PSX_WS_MENU_SHADOW; dy <= PSX_WS_MENU_SHADOW && !*one; ++dy)
-                for (int dx = -PSX_WS_MENU_SHADOW; dx <= PSX_WS_MENU_SHADOW; ++dx) {
+            for (int dy = -PSX_WS_MENU_HALO; dy <= PSX_WS_MENU_HALO && !*one; ++dy)
+                for (int dx = -PSX_WS_MENU_HALO; dx <= PSX_WS_MENU_HALO; ++dx) {
                     const int nx = x + dx, ny = y + dy;
                     if (nx < 0 || ny < 0 || nx >= PSX_WS_MENU_LOGO_WIDE || ny >= PSX_WS_MENU_LOGO_ROWS) continue;
                     if (mask[ny * PSX_WS_MENU_LOGO_WIDE + nx] == 1) *one = 2;
                 }
         }
+    for (int y = PSX_WS_MENU_TAIL_TOP - PSX_WS_MENU_LOGO_TOP; y < PSX_WS_MENU_TAIL_TOP - PSX_WS_MENU_LOGO_TOP + PSX_WS_MENU_TAIL_ROWS; ++y) {
+        int last = PSX_WS_MENU_LOGO_WIDE;
+        for (int x = 0; x < PSX_WS_MENU_LOGO_WIDE; ++x)
+            if (mask[y * PSX_WS_MENU_LOGO_WIDE + x] == 1) last = x;
+        for (int x = last + 1; x < PSX_WS_MENU_LOGO_WIDE; ++x) mask[y * PSX_WS_MENU_LOGO_WIDE + x] = 2;
+    }
 }
 
 /* The logo alone, a word a texel in its own colours: nothing where the mask is clear, which a textured rectangle then leaves undrawn. */
@@ -99,50 +98,41 @@ static inline void psx_ws_menu_logo_span(int32_t centre, int32_t numerator, int3
     *right = psx_ws_squash_about(PSX_WS_MENU_LOGO_RIGHT, centre, numerator, denominator);
 }
 
-/* The palette entry nearest a colour, looked up once: `nearest` holds PSX_WS_MENU_NEAREST entries, -1 where not asked yet, for this palette alone. */
-static inline int psx_ws_menu_nearest(const uint16_t *palette, int16_t *nearest, int red, int green, int blue) {
-    int16_t *known = &nearest[red | (green << 5) | (blue << 10)];
-    if (*known >= 0) return *known;
-    int32_t least = INT32_MAX;
-    for (int index = 0; index < 256; ++index) {
-        const int32_t r = (palette[index] & 31) - red, g = ((palette[index] >> 5) & 31) - green, b = ((palette[index] >> 10) & 31) - blue;
-        if (r * r + g * g + b * b >= least) continue;
-        least = r * r + g * g + b * b;
-        *known = (int16_t)index;
-    }
-    return *known;
+/* Whether the logo is lifted from a texel of the picture. */
+static inline int psx_ws_menu_lifted(const uint8_t *mask, int x, int y) {
+    return x >= PSX_WS_MENU_LOGO_LEFT && x < PSX_WS_MENU_LOGO_RIGHT && y >= PSX_WS_MENU_LOGO_TOP && y < PSX_WS_MENU_LOGO_BOTTOM &&
+           mask[(y - PSX_WS_MENU_LOGO_TOP) * PSX_WS_MENU_LOGO_WIDE + (x - PSX_WS_MENU_LOGO_LEFT)];
 }
 
-/* Paints the logo's texels in the picture with a blend of the scene above and below its rows, so the stretched logo does not show behind the kept one. */
-/* The blend is of a 5x4 block on either side, or every column would be a stripe of its own, and is dithered into the palette. */
-static inline void psx_ws_menu_paint(uint16_t *picture, int stride, const uint16_t *palette, const uint8_t *mask, int16_t *nearest) {
-    for (int x = 0; x < PSX_WS_MENU_LOGO_WIDE; ++x) {
-        int above[3] = {0, 0, 0}, below[3] = {0, 0, 0}, any = 0;
-        for (int y = 0; y < PSX_WS_MENU_LOGO_ROWS; ++y) any |= mask[y * PSX_WS_MENU_LOGO_WIDE + x];
-        if (!any) continue;
-        for (int row = 0; row < PSX_WS_MENU_PAINT_FROM; ++row)
-            for (int beside = -2; beside <= 2; ++beside) {
-                const int at = PSX_WS_MENU_LOGO_LEFT + x + beside;
-                const int column = at < 0 ? 0 : at >= PSX_WS_MENU_WIDE ? PSX_WS_MENU_WIDE - 1 : at;
-                const uint16_t top = palette[psx_ws_menu_texel(picture, stride, column, PSX_WS_MENU_LOGO_TOP - 1 - row)];
-                const uint16_t bottom = palette[psx_ws_menu_texel(picture, stride, column, PSX_WS_MENU_LOGO_BOTTOM + row)];
-                for (int part = 0; part < 3; ++part) {
-                    above[part] += (top >> (5 * part)) & 31;
-                    below[part] += (bottom >> (5 * part)) & 31;
+typedef char psx_ws_menu_scene_below[PSX_WS_MENU_LOGO_BOTTOM + PSX_WS_MENU_LOGO_ROWS <= PSX_WS_MENU_HIGH ? 1 : -1]; /* so the way down always has a texel to mirror */
+
+/* Fills what the logo leaves with the scene beside it, or the stretched logo shows behind the kept one. A texel takes the scene texel as far past the end of its run as it is inside it, */
+/* in the nearest of four directions that has one. A blend of the rows above and below was tried: it smeared on light scenes and greyed where dark met light. */
+static inline void psx_ws_menu_paint(uint16_t *picture, int stride, const uint8_t *mask) {
+    static const int8_t across[4] = {0, 0, -1, 1}, down[4] = {-1, 1, 0, 0};
+    for (int y = PSX_WS_MENU_LOGO_TOP; y < PSX_WS_MENU_LOGO_BOTTOM; ++y)
+        for (int x = PSX_WS_MENU_LOGO_LEFT; x < PSX_WS_MENU_LOGO_RIGHT; ++x) {
+            if (!psx_ws_menu_lifted(mask, x, y)) continue;
+            uint32_t draw = (uint32_t)x * 0x9E3779B1u + (uint32_t)y * 0x85EBCA77u; /* which of two ends as near as each other. Mixed well: a weaker one striped a row of ties */
+            draw = (draw ^ (draw >> 15)) * 0x2C1B3C6Du;
+            draw ^= draw >> 12;
+            int from_x = x, from_y = y, least = INT32_MAX;
+            for (int way = 0; way < 4; ++way) {
+                int distance = 1, end_x = x + across[way], end_y = y + down[way];
+                while (psx_ws_menu_lifted(mask, end_x, end_y)) {
+                    ++distance;
+                    end_x += across[way];
+                    end_y += down[way];
                 }
+                const int mirror_x = end_x + across[way] * (distance - 1), mirror_y = end_y + down[way] * (distance - 1);
+                if (mirror_x < 0 || mirror_x >= PSX_WS_MENU_WIDE || mirror_y < 0 || psx_ws_menu_lifted(mask, mirror_x, mirror_y)) continue; /* a speck of scene inside a letter has nothing behind it to mirror */
+                if (distance > least || (distance == least && !(draw & 1))) continue;
+                least = distance;
+                from_x = mirror_x;
+                from_y = mirror_y;
             }
-        for (int y = 0; y < PSX_WS_MENU_LOGO_ROWS; ++y) {
-            if (!mask[y * PSX_WS_MENU_LOGO_WIDE + x]) continue;
-            const int noise = (((x * 73 + y * 151) ^ (x * y)) & 15) - 8; /* half a step of a colour part either way, in no pattern an eye picks up */
-            int wanted[3];
-            for (int part = 0; part < 3; ++part) { /* sums of twenty five-bit parts, mixed by the row, in sixteenths of a step, then rounded to a step */
-                const int fine = ((above[part] * (PSX_WS_MENU_LOGO_ROWS - y) + below[part] * (y + 1)) * 16) / (20 * (PSX_WS_MENU_LOGO_ROWS + 1)) + noise + 8;
-                wanted[part] = fine < 0 ? 0 : fine > 31 * 16 ? 31 : fine / 16;
-            }
-            psx_ws_menu_set_texel(picture, stride, PSX_WS_MENU_LOGO_LEFT + x, PSX_WS_MENU_LOGO_TOP + y,
-                                  psx_ws_menu_nearest(palette, nearest, wanted[0], wanted[1], wanted[2]));
+            psx_ws_menu_set_texel(picture, stride, x, y, psx_ws_menu_texel(picture, stride, from_x, from_y));
         }
-    }
 }
 
 /* On a front-end frame a rectangle keeps its shape on the stretched screen: its columns are squashed about the centre. Returns its width, 1 at least. */
