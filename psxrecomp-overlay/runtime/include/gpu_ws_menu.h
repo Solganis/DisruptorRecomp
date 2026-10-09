@@ -59,7 +59,7 @@ static inline int psx_ws_menu_has_logo(const uint16_t *picture, int stride, cons
     return count >= PSX_WS_MENU_LOGO_LEAST;
 }
 
-/* Marks the texels the logo is lifted from in its box, PSX_WS_MENU_LOGO_WIDE a row: 1 for its own colours, 2 for what is beside them, whatever its colour, and for the streak's tail. */
+/* Marks the texels the logo is lifted from in its box, PSX_WS_MENU_LOGO_WIDE a row: 1 for its own colours, 2 for its shadow and the streak's tail, 3 for the rest of the halo, lifted and not kept. */
 static inline void psx_ws_menu_logo_mask(const uint16_t *picture, int stride, const uint16_t *palette, uint8_t *mask) {
     for (int y = 0; y < PSX_WS_MENU_LOGO_ROWS; ++y)
         for (int x = 0; x < PSX_WS_MENU_LOGO_WIDE; ++x)
@@ -72,8 +72,9 @@ static inline void psx_ws_menu_logo_mask(const uint16_t *picture, int stride, co
                 for (int dx = -PSX_WS_MENU_HALO; dx <= PSX_WS_MENU_HALO; ++dx) {
                     const int nx = x + dx, ny = y + dy;
                     if (nx < 0 || ny < 0 || nx >= PSX_WS_MENU_LOGO_WIDE || ny >= PSX_WS_MENU_LOGO_ROWS) continue;
-                    if (mask[ny * PSX_WS_MENU_LOGO_WIDE + nx] == 1) *one = 2;
+                    if (mask[ny * PSX_WS_MENU_LOGO_WIDE + nx] == 1) *one = 3;
                 }
+            if (*one == 3 && x > 0 && y > 0 && mask[(y - 1) * PSX_WS_MENU_LOGO_WIDE + x - 1] == 1) *one = 2; /* the shadow falls one down and one right: that takes 458 of its 559 texels and 32 of the scene's */
         }
     for (int y = PSX_WS_MENU_TAIL_TOP - PSX_WS_MENU_LOGO_TOP; y < PSX_WS_MENU_TAIL_TOP - PSX_WS_MENU_LOGO_TOP + PSX_WS_MENU_TAIL_ROWS; ++y) {
         int last = PSX_WS_MENU_LOGO_WIDE;
@@ -83,12 +84,13 @@ static inline void psx_ws_menu_logo_mask(const uint16_t *picture, int stride, co
     }
 }
 
-/* The logo alone, a word a texel in its own colours: nothing where the mask is clear, which a textured rectangle then leaves undrawn. */
+/* The logo alone, a word a texel in its own colours: nothing where it is not kept, which a textured rectangle then leaves undrawn. Scene kept round the letters showed as a fringe. */
 static inline void psx_ws_menu_keep_logo(const uint16_t *picture, int stride, const uint16_t *palette, const uint8_t *mask, uint16_t *kept) {
     for (int y = 0; y < PSX_WS_MENU_LOGO_ROWS; ++y)
         for (int x = 0; x < PSX_WS_MENU_LOGO_WIDE; ++x) {
             const uint16_t colour = palette[psx_ws_menu_texel(picture, stride, PSX_WS_MENU_LOGO_LEFT + x, PSX_WS_MENU_LOGO_TOP + y)];
-            kept[y * PSX_WS_MENU_LOGO_WIDE + x] = !mask[y * PSX_WS_MENU_LOGO_WIDE + x] ? 0 : colour ? colour : 0x8000; /* black is drawn only with its top bit set */
+            const int mark = mask[y * PSX_WS_MENU_LOGO_WIDE + x];
+            kept[y * PSX_WS_MENU_LOGO_WIDE + x] = mark != 1 && mark != 2 ? 0 : colour ? colour : 0x8000; /* black is drawn only with its top bit set */
         }
 }
 

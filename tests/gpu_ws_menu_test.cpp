@@ -84,28 +84,29 @@ void test_the_logo_is_lifted_with_what_is_beside_it() {
     std::vector<std::uint8_t> mask(PSX_WS_MENU_LOGO_ROWS * PSX_WS_MENU_LOGO_WIDE, 9);
     const auto marked = [&](int x, int y) { return mask[y * PSX_WS_MENU_LOGO_WIDE + x]; };
     put(picture, 20, 10, kRed);
-    put(picture, 20 + PSX_WS_MENU_HALO, 10 + PSX_WS_MENU_HALO, kBlack);
+    put(picture, 21, 11, kBlack);
     put(picture, 20 - PSX_WS_MENU_HALO, 10, kDim);
     put(picture, 20 + PSX_WS_MENU_HALO + 1, 10, kBlack);
     put(picture, 0, 0, kRed);
     put(picture, PSX_WS_MENU_LOGO_WIDE - 1, PSX_WS_MENU_LOGO_ROWS - 1, kRed);
     psx_ws_menu_logo_mask(picture.data(), kStride, colours.data(), mask.data());
     expect(marked(20, 10) == 1 && marked(0, 0) == 1 && marked(PSX_WS_MENU_LOGO_WIDE - 1, PSX_WS_MENU_LOGO_ROWS - 1) == 1, "a texel of the logo's colours is the logo, in the box's corners too");
-    expect(marked(20 + PSX_WS_MENU_HALO, 10 + PSX_WS_MENU_HALO) == 2 && marked(20 - PSX_WS_MENU_HALO, 10) == 2 && marked(20, 10 - PSX_WS_MENU_HALO) == 2 &&
-               marked(20 + PSX_WS_MENU_HALO, 10 - PSX_WS_MENU_HALO) == 2 && marked(21, 10) == 2 && marked(PSX_WS_MENU_HALO, PSX_WS_MENU_HALO) == 2 &&
-               marked(PSX_WS_MENU_LOGO_WIDE - 1 - PSX_WS_MENU_HALO, PSX_WS_MENU_LOGO_ROWS - 1) == 2,
-           "what is within the halo of it goes with it, green as it may be: its outline is not told by a colour");
+    expect(marked(21, 11) == 2 && marked(1, 1) == 2, "the texel one down and one right of it is its shadow, whatever its colour");
+    expect(marked(20 + PSX_WS_MENU_HALO, 10 + PSX_WS_MENU_HALO) == 3 && marked(20 - PSX_WS_MENU_HALO, 10) == 3 && marked(20, 10 - PSX_WS_MENU_HALO) == 3 &&
+               marked(20 + PSX_WS_MENU_HALO, 10 - PSX_WS_MENU_HALO) == 3 && marked(21, 10) == 3 && marked(20, 11) == 3 && marked(19, 9) == 3 && marked(19, 11) == 3 && marked(21, 9) == 3 &&
+               marked(PSX_WS_MENU_HALO, PSX_WS_MENU_HALO) == 3 && marked(PSX_WS_MENU_LOGO_WIDE - 1 - PSX_WS_MENU_HALO, PSX_WS_MENU_LOGO_ROWS - 1) == 3,
+           "the rest within the halo is lifted with it and is not its shadow: its outline is not told by a colour");
     expect(marked(20 + PSX_WS_MENU_HALO + 1, 10) == 0 && marked(20, 10 + PSX_WS_MENU_HALO + 1) == 0 && marked(20 - PSX_WS_MENU_HALO - 1, 10) == 0 &&
-               marked(20 + PSX_WS_MENU_HALO + 1, 10 + PSX_WS_MENU_HALO) == 0 && marked(100, 20) == 0,
-           "one past the halo is scene, dark as it may be, and what goes with the logo does not pass the halo on");
+               marked(20 + PSX_WS_MENU_HALO + 1, 10 + PSX_WS_MENU_HALO) == 0 && marked(100, 20) == 0 && marked(22, 12) == 3,
+           "one past the halo is scene, dark as it may be, and neither the halo nor the shadow is passed on");
     expect(std::count(mask.begin(), mask.end(), std::uint8_t{9}) == 0, "every texel of the box is decided");
 
     std::vector<std::uint16_t> kept(PSX_WS_MENU_LOGO_ROWS * PSX_WS_MENU_LOGO_WIDE, 0x1234);
     psx_ws_menu_keep_logo(picture.data(), kStride, colours.data(), mask.data(), kept.data());
-    expect(kept[10 * PSX_WS_MENU_LOGO_WIDE + 20] == colours[kRed] && kept[10 * PSX_WS_MENU_LOGO_WIDE + 20 - PSX_WS_MENU_HALO] == colours[kDim] &&
-               kept[10 * PSX_WS_MENU_LOGO_WIDE + 21] == colours[kGreen],
-           "the kept logo has its own colours and those of what goes with it");
-    expect(kept[(10 + PSX_WS_MENU_HALO) * PSX_WS_MENU_LOGO_WIDE + 20 + PSX_WS_MENU_HALO] == 0x8000, "its black is kept with the top bit, or a rectangle would not draw it");
+    expect(kept[10 * PSX_WS_MENU_LOGO_WIDE + 20] == colours[kRed] && kept[1 * PSX_WS_MENU_LOGO_WIDE + 1] == colours[kGreen], "the kept logo has its own colours and its shadow's");
+    expect(kept[11 * PSX_WS_MENU_LOGO_WIDE + 21] == 0x8000, "its black is kept with the top bit, or a rectangle would not draw it");
+    expect(kept[10 * PSX_WS_MENU_LOGO_WIDE + 20 - PSX_WS_MENU_HALO] == 0 && kept[10 * PSX_WS_MENU_LOGO_WIDE + 21] == 0 && kept[9 * PSX_WS_MENU_LOGO_WIDE + 19] == 0,
+           "the rest of the halo is lifted and not kept: scene carried round the letters showed as a fringe");
     expect(kept[10 * PSX_WS_MENU_LOGO_WIDE + 20 + PSX_WS_MENU_HALO + 1] == 0 && kept[20 * PSX_WS_MENU_LOGO_WIDE + 100] == 0, "and nothing where the scene is");
 }
 
@@ -129,6 +130,9 @@ void test_the_streak_is_lifted_to_the_end_of_its_tail() {
     expect(marked(125, first) == 0 && marked(40, last) == 0, "nothing between two such texels or left of the first does");
     expect(marked(190, first - 4) == 0 && marked(190, last + 4) == 0 && marked(190, first - 1) == 0 && marked(190, last + 1) == 0, "nor in any other row");
     expect(marked(150, first) == 1 && marked(60, last) == 1, "and the logo's own texels stay its own");
+    std::vector<std::uint16_t> kept(PSX_WS_MENU_LOGO_ROWS * PSX_WS_MENU_LOGO_WIDE, 0x1234);
+    psx_ws_menu_keep_logo(picture.data(), kStride, colours.data(), mask.data(), kept.data());
+    expect(kept[first * PSX_WS_MENU_LOGO_WIDE + 190] == colours[kGreen] && kept[(first - 4) * PSX_WS_MENU_LOGO_WIDE + 152] == 0, "the tail is kept with the logo, the halo elsewhere is not");
 
     std::vector<std::uint16_t> bare = picture_of(kGreen);
     put(bare, 150, first - 4, kRed);
@@ -175,7 +179,7 @@ void test_what_the_logo_leaves_is_the_scene_mirrored() {
     std::vector<std::uint8_t> mask(PSX_WS_MENU_LOGO_ROWS * PSX_WS_MENU_LOGO_WIDE, 0);
     const auto lift = [&](int left, int top, int right, int bottom) {
         for (int y = top; y <= bottom; ++y)
-            for (int x = left; x <= right; ++x) mask[y * PSX_WS_MENU_LOGO_WIDE + x] = 1 + ((x + y) & 1);
+            for (int x = left; x <= right; ++x) mask[y * PSX_WS_MENU_LOGO_WIDE + x] = static_cast<std::uint8_t>(1 + (x + y) % 3);
     };
     lift(40, 10, 99, 13);
     lift(40, 20, 99, 22);
