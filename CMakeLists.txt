@@ -163,6 +163,10 @@ if(BUILD_TESTING)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backdrop_tiles_contract.py"
             --require-artifacts)
 
+    add_test(NAME disruptor_depth24_sync_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_depth24_sync_contract.py")
+
     add_test(NAME disruptor_geometry_provenance_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_geometry_provenance_contract.py")
