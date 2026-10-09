@@ -113,3 +113,30 @@ The framework revision is pinned in `PSXRECOMP_PIN`, and the reviewed overlay
 files are listed in `PSXRECOMP_OVERLAY_FILES.txt`. Runtime preferences live in
 `settings.toml` beside the executable; game files, generated code, and build
 directories are ignored by Git.
+
+## Replay capsules
+
+Ctrl+F12 in the game starts a recording and Ctrl+F12 again ends it. The game
+writes a folder under `capsules/` beside `settings.toml`: a save state, the
+input of every frame after it, the settings and the build it was made with.
+A recording ends by itself after ten minutes, or when a save state is loaded.
+The word REC shows in a corner for a second when a recording starts, and REC
+saved when it ends.
+
+```sh
+python tools/replay_capsule.py capsules/1791553413 --pictures out
+```
+
+This plays the capsule back without a window or sound, writes each frame as a
+PNG and exits with 0 when the replay stayed in step with the recording. A
+replay is the same run every time. It is not the recorded run bit for bit: a
+loaded state takes its interrupts a few instructions apart, so about one frame
+in four differs from the recording in a few bytes of the game's memory, nine
+frames in a row at the most in the runs measured. A replay counts as in step
+when it has the recording's memory at some frame of its last 60.
+
+A capsule holds the pad buttons, the heading the mouse wrote and the pitch of
+the vertical look. It does not hold analog sticks, cheats or anything changed
+in the settings menu while it was recorded. It plays in the build that made
+it, and it is not recorded in a network game. The pictures are of the 4:3
+software frame: the widescreen and in-between frames need a window.
