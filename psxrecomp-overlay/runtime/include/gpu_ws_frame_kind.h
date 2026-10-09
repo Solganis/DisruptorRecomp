@@ -19,6 +19,7 @@
 typedef struct {
     uint32_t x, y;
     int known, flat;
+    int menu; /* a front-end screen whose backdrop fills a wide screen: flat, and shown wide all the same */
 } PsxWsFrameBuffer;
 
 typedef struct {
@@ -55,6 +56,7 @@ static inline void psx_ws_frame_kinds_area(PsxWsFrameKinds *kinds, uint32_t x, u
     kinds->buffers[slot].y = y;
     kinds->buffers[slot].known = 1;
     kinds->buffers[slot].flat = kinds->told ? kinds->told_flat : kinds->projected < least;
+    kinds->buffers[slot].menu = 0;
     kinds->drawing = slot;
     kinds->projected = 0;
     kinds->told = 0;
@@ -87,6 +89,21 @@ static inline int psx_ws_frame_kinds_displayed(const PsxWsFrameKinds *kinds, uin
         if (kinds->buffers[i].known && kinds->buffers[i].x == x && kinds->buffers[i].y == y)
             return kinds->buffers[i].flat;
     return -1;
+}
+
+/* The frame being drawn has drawn the front end's backdrop. */
+static inline void psx_ws_frame_kinds_menu_begin(PsxWsFrameKinds *kinds) {
+    if (kinds->buffers[kinds->drawing].known) kinds->buffers[kinds->drawing].menu = 1;
+}
+
+static inline int psx_ws_frame_kinds_menu(const PsxWsFrameKinds *kinds) {
+    return kinds->buffers[kinds->drawing].known && kinds->buffers[kinds->drawing].menu;
+}
+
+static inline int psx_ws_frame_kinds_displayed_menu(const PsxWsFrameKinds *kinds, uint32_t x, uint32_t y) {
+    for (int i = 0; i < 2; ++i)
+        if (kinds->buffers[i].known && kinds->buffers[i].x == x && kinds->buffers[i].y == y) return kinds->buffers[i].menu;
+    return 0;
 }
 
 #endif /* PSXRECOMP_GPU_WS_FRAME_KIND_H */

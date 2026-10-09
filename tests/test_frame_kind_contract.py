@@ -115,7 +115,8 @@ require(
 )
 native = body(gpu, "static int ws_native_43(int displayed)")
 require(
-    "    if (!ws_engaged()) return 0;\n    if (!ws_game_mode_of(displayed)) return 1;" in native,
+    "    if (!ws_engaged()) return 0;\n    if (displayed ? gpu_ws_displayed_menu() : ws_menu_frame()) return 0;\n"
+    "    if (!ws_game_mode_of(displayed)) return 1;" in native,
     "the native 4:3 answer must follow the frame it is asked about",
 )
 require(
