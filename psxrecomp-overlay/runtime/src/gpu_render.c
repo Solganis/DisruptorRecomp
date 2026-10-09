@@ -121,6 +121,9 @@ void gr_set_precise_triangle(int enabled,
     if (g_b->set_precise_triangle)
         g_b->set_precise_triangle(enabled, x0, y0, x1, y1, x2, y2);
 }
+void gr_set_unpinned_triangle(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2) {
+    if (g_b->set_unpinned_triangle) g_b->set_unpinned_triangle(x0, y0, x1, y1, x2, y2);
+}
 void gr_set_perspective_triangle(int enabled,
                                  float q0, float q1, float q2) {
     if (g_b->set_perspective_triangle)

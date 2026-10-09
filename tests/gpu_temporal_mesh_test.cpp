@@ -537,12 +537,16 @@ struct Departure {
     std::array<Point, 3> gone{};
     int kept = 0, left = 0;
 
-    explicit Departure(const View &view, double focal = 256.0) : scene(room(view, focal)) {
+    /* `depth` replaces the depths the dropped face had in the previous frame, where it is not negative. */
+    explicit Departure(const View &view, double focal = 256.0, std::array<float, 3> depth = {-1.0f, -1.0f, -1.0f})
+        : scene(room(view, focal)) {
         kept = scene.faces();
         gone = {Point{-100, -50, 800}, Point{100, 50, 800}, Point{-100, 50, 800}};
         scene.add_face({Point{-100, -50, 800}, Point{100, -50, 800}, Point{100, 50, 800}}, 900);
         scene.add_face(gone, 901);
         left = static_cast<int>(scene.previous.size()) - 1;
+        for (int vertex = 0; vertex < 3; ++vertex)
+            if (depth[vertex] >= 0.0f) scene.previous[left].depth[vertex] = depth[vertex];
         scene.current.pop_back();
         scene.matches.pop_back();
         scene.before.pop_back();
@@ -624,6 +628,40 @@ void departed_faces_meet_their_neighbours() {
                                     blind.scene.current.data(), blind.scene.faces(), blind.scene.matches.data(),
                                     from.data(), &stats, nullptr, blind.to.data(), blind.departed.data(), nullptr);
     expect(stats.departed_faces == 0, "departed faces need both ends of their path");
+}
+
+/* The game pins a corner behind the viewer far off the screen and gives it no depth. */
+void departed_face_keeps_a_corner_without_depth() {
+    Departure d(kStride, 256.0, {-1.0f, -1.0f, 0.0f});
+    const GpuTemporalTriangle &was = d.scene.previous[d.left];
+    expect(d.stats.departed_faces == 1 && d.departed[d.left] == 2 && d.stats.welded_corners == 2,
+           "a dropped face with one corner without depth is still carried, and marked");
+    expect(d.start[d.left].x[2] == was.x[2] && d.start[d.left].y[2] == was.y[2] && d.start[d.left].w[2] == 0.0f &&
+               d.to[d.left].x[2] == was.x[2] && d.to[d.left].y[2] == was.y[2] && d.to[d.left].w[2] == 0.0f &&
+               d.to[d.left].depth[2] == 0.0f,
+           "the corner without depth stays where it was drawn, at both ends");
+    for (float alpha : {0.0f, 0.3f, 0.7f}) {
+        GpuTemporalTriangle kept{}, left{};
+        gpu_temporal_lerp(&d.from[d.kept], &d.scene.current[d.kept], alpha, &kept);
+        gpu_temporal_lerp(&d.start[d.left], &d.to[d.left], alpha, &left);
+        expect(left.x[0] == kept.x[0] && left.y[0] == kept.y[0] && left.x[1] == kept.x[2] && left.y[1] == kept.y[2] &&
+                   left.x[2] == was.x[2] && left.y[2] == was.y[2],
+               "its other corners still meet the neighbour at every step, and the held one does not move");
+    }
+
+    Departure shared(kStride, 256.0, {0.0f, -1.0f, -1.0f});
+    expect(shared.departed[shared.left] == 2 && shared.to[shared.left].x[0] == shared.scene.previous[shared.left].x[0] &&
+               shared.to[shared.left].w[0] == 0.0f && shared.to[shared.left].w[2] > 0.0f,
+           "a corner without depth is held even where a current face has that corner, and the rest is carried");
+
+    Departure flat(kStride, 256.0, {0.0f, 0.0f, 0.0f});
+    expect(flat.stats.departed_faces == 0 && flat.departed[flat.left] == 0,
+           "a face with no depth at all has nothing to be carried by");
+    Departure distant(kStride, 256.0, {-1.0f, -1.0f, 65535.0f});
+    expect(distant.stats.departed_faces == 0 && distant.departed[distant.left] == 0,
+           "a saturated far depth is not a missing one: that corner turns with the view and cannot be held");
+    Departure whole(kStride);
+    expect(whole.departed[whole.left] == 1, "a face with all its depths keeps the plain mark");
 }
 
 void whip_turn_past_the_screen_edge() {
@@ -877,6 +915,7 @@ int main() {
     look_alikes_and_moving_objects();
     fast_turn_keeps_lines_straight();
     departed_faces_meet_their_neighbours();
+    departed_face_keeps_a_corner_without_depth();
     whip_turn_past_the_screen_edge();
     facing_and_camera_bounds();
     helpers_refuse_numbers_that_are_not_numbers();

@@ -619,7 +619,7 @@ static float temporal_order(float depth) {
  * from shows the clear colour between real frames. Three kinds, two passes:
  * an opaque face with model coordinates goes under the current world and
  * again over the scene wherever it is nearer by TEMP_ORDER_CLEARANCE than the
- * current face that covered it. An opaque face without them (a grown copy) goes under the world
+ * current face that covered it. An opaque face without them (a grown copy) or with a held corner goes under the world
  * only. A sprite goes over the scene only, and only when no current sprite
  * stands in its place. A translucent current face writes its depth too, so
  * behind one the second pass is lost and the far face shows. */
@@ -663,7 +663,7 @@ static void temporal_underlay(float alpha,int covered) {
             /* Over the scene the old picture of a replaced sprite would ring the new one. A sprite the
              * game dropped has no successor and is carried on. */
             if (show && was->sprite) show=covered && !temporal_sprite_replaced(s,&p->gone_to[ti]);
-            else if (show) show=opaque && !(t && s_temp_under[j*TEXV+18]!=0.0f) && (!covered || was->modelled);
+            else if (show) show=opaque && !(t && s_temp_under[j*TEXV+18]!=0.0f) && (!covered || (was->modelled && show==1));
             if (show) {
                 gpu_temporal_lerp(&p->start[ti],&p->gone_to[ti],alpha,&out);
                 show=gpu_temporal_mesh_facing(&p->triangles[ti],&out);

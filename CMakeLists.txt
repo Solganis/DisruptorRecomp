@@ -179,6 +179,10 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_perspective_texture_contract.py")
 
+    add_test(NAME disruptor_pinned_corner_contract
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pinned_corner_contract.py")
+
     add_test(NAME disruptor_dev_menu_contract
         COMMAND "${Python3_EXECUTABLE}" -B
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dev_menu_contract.py")
@@ -379,6 +383,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_compile_features(disruptor-gpu-temporal-mesh-test PRIVATE cxx_std_20)
     add_test(NAME disruptor_gpu_temporal_mesh
         COMMAND disruptor-gpu-temporal-mesh-test)
+
+    add_executable(disruptor-gpu-pinned-corner-test
+        tests/gpu_pinned_corner_test.cpp)
+    target_include_directories(disruptor-gpu-pinned-corner-test PRIVATE
+        "${PSXRECOMP_ROOT}/runtime/include")
+    target_compile_features(disruptor-gpu-pinned-corner-test PRIVATE cxx_std_20)
+    add_test(NAME disruptor_gpu_pinned_corner
+        COMMAND disruptor-gpu-pinned-corner-test)
 
     add_executable(disruptor-presentation-yaw-math-test
         tests/presentation_yaw_math_test.cpp)

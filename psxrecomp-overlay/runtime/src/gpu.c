@@ -25,6 +25,7 @@
 #include "mod_runtime.h"
 #include "ws_cull_detect.h"
 #include "ws_aspect_cone_math.h"
+#include "gpu_pinned_corner.h"
 #include "gpu_ws_hud_scale.h"
 #include "gpu_ws_hud_widget.h"
 #include "gpu_ws_screen_tile.h"
@@ -3530,6 +3531,8 @@ static uint16_t s_precise_vertex_depth[4];
 static uint64_t s_precise_vertex_identity[4];
 static int s_precise_vertex_partial;
 #endif
+/* A polygon that falls back still draws the corners the game pinned where they project: its neighbours do. */
+static PsxPinnedPlaces s_pinned_places;
 #ifdef PSX_HAS_DISRUPTOR_GROWN_QUAD
 extern int disruptor_grown_quad_sources(
     uint32_t command_address, const uint32_t *packet,
@@ -3544,6 +3547,7 @@ static int resolve_precise_vertices(const int *indices, int count,
     memset(s_precise_vertex_identity, 0, sizeof(s_precise_vertex_identity));
     s_precise_vertex_partial = 0;
 #endif
+    s_pinned_places.unpinned = 0;
     if (!gte_geometry_correction_enabled())
         return 0;
 
@@ -3574,6 +3578,8 @@ static int resolve_precise_vertices(const int *indices, int count,
     int32_t precise_x[4], precise_y[4], raw_x[4], raw_y[4];
     uint16_t z[4];
     int resolved = 0;
+    int pinned[4] = {0};
+    const int unpin = gte_precision_unpin_enabled();
     uint32_t grown_addr[4] = {0}, grown_word[4] = {0};
 #ifdef PSX_HAS_DISRUPTOR_GROWN_QUAD
     /* Disruptor's second, grown copy of a world quad stands on the first packet's corners. */
@@ -3602,15 +3608,16 @@ static int resolve_precise_vertices(const int *indices, int count,
                  * offsets and widescreen transforms in vx/vy must not hide a
                  * saturated or otherwise non-subpixel discrepancy. */
                 /* A corner the game pinned to its guard band is drawn where it projects. */
+                pinned[i] = gte_precision_word_clamped(addr, word);
                 if ((fixed16_integer_floor(precise_x[i]) != raw_x[i] ||
                      fixed16_integer_floor(precise_y[i]) != raw_y[i]) &&
-                    !gte_precision_word_clamped(addr, word)) {
+                    !pinned[i]) {
                     reject = GPU_GEOMETRY_REJECT_INTEGER_MISMATCH;
                 } else {
                     accepted = 1;
                     ++resolved;
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
-                    s_precise_vertex_depth[i] = z[i];
+                    s_precise_vertex_depth[i] = psx_pinned_corner_depth(unpin, pinned[i], z[i]);
 #endif
                 }
             }
@@ -3639,6 +3646,7 @@ static int resolve_precise_vertices(const int *indices, int count,
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
             s_precise_vertex_partial = 1;
 #endif
+            psx_pinned_places(count, unpin, pinned, precise_x, precise_y, raw_x, raw_y, vx, vy, &s_pinned_places);
         }
         return 0;
     }
@@ -3654,7 +3662,7 @@ static int resolve_precise_vertices(const int *indices, int count,
                                 raw_x, raw_y, z);
     for (int i = 0; i < count; ++i) {
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
-        s_precise_vertex_depth[i] = z[i];
+        s_precise_vertex_depth[i] = psx_pinned_corner_depth(unpin, pinned[i], z[i]);
         {
             uint32_t identity_addr;
             /* A grown corner is off its model point: it gets the depth and no identity. */
@@ -3687,6 +3695,9 @@ static void queue_precise_triangle(int exact,
     if (geometry_enabled) ++ws_geometry_world_triangles;
     if (!geometry_enabled || !exact) {
         gr_set_precise_triangle(0, 0,0, 0,0, 0,0);
+        if (geometry_enabled && s_pinned_places.unpinned)
+            gr_set_unpinned_triangle(s_pinned_places.x16[a], s_pinned_places.y16[a], s_pinned_places.x16[b], s_pinned_places.y16[b],
+                                     s_pinned_places.x16[c], s_pinned_places.y16[c]);
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
         /* The corners that did resolve keep their depth: an in-between frame moves them with the camera. */
         if (geometry_enabled && s_precise_vertex_partial)
@@ -3700,7 +3711,7 @@ static void queue_precise_triangle(int exact,
     ++ws_geometry_precise_triangles;
     gr_set_world_triangle(1);
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
-    gr_set_temporal_depth_triangle(1,
+    gr_set_temporal_depth_triangle(psx_pinned_depth_mode(s_precise_vertex_depth[a], s_precise_vertex_depth[b], s_precise_vertex_depth[c]),
                                    (float)s_precise_vertex_depth[a],
                                    (float)s_precise_vertex_depth[b],
                                    (float)s_precise_vertex_depth[c]);

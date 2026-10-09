@@ -229,9 +229,25 @@ struct PreciseProjection {
     uint8_t saturated;
     uint8_t perspective_valid;
     uint8_t clamped; /* packed is what the game pinned the projection to */
+    uint8_t unbounded; /* the GTE's divide or screen stopped short, and exact_x16 and exact_y16 hold what an exact divide gives */
+    int32_t exact_x16, exact_y16;
     uint64_t identity;
 };
 static PreciseProjection s_precise_sxy[4] = {};
+/* PSX_GEOMETRY_UNPIN=0 in a build with debug tools leaves pinned corners as the game put them, for comparison. */
+static int s_precision_unpin = -1;
+static int precision_unpin() {
+    if (s_precision_unpin < 0) {
+        s_precision_unpin = 1;
+#ifndef PSX_NO_DEBUG_TOOLS
+        const char *value = getenv("PSX_GEOMETRY_UNPIN");
+        if (value && value[0] == '0') s_precision_unpin = 0;
+#endif
+    }
+    return s_precision_unpin;
+}
+/* Half of what a 16.16 coordinate holds: an exact place stays under it with the screen centre in, the drawing offset comes later. */
+constexpr int64_t kUnboundedLimit16 = INT64_C(1) << 30;
 
 #define PRECISION_STORE_SIZE 65536u
 struct PrecisionStoreEntry {
@@ -974,7 +990,8 @@ static GtePrecisionLookupResult precision_lookup_projection(
         return GTE_PRECISION_LOOKUP_PACKED_MISMATCH;
     if (entry.projection.z == 0)
         return GTE_PRECISION_LOOKUP_ZERO_DEPTH;
-    if (entry.projection.saturated)
+    /* A corner the GTE saturated and the game then pinned to its guard band is drawn where it projects. */
+    if (entry.projection.saturated && !(entry.projection.clamped && entry.projection.unbounded && precision_unpin()))
         return GTE_PRECISION_LOOKUP_SATURATED;
     if (projection) *projection = &entry.projection;
     return GTE_PRECISION_LOOKUP_ACCEPTED;
@@ -987,8 +1004,10 @@ extern "C" GtePrecisionLookupResult gte_precision_load_word_ex(
     const GtePrecisionLookupResult result =
         precision_lookup_projection(addr, packed, &projection);
     if (result != GTE_PRECISION_LOOKUP_ACCEPTED) return result;
-    if (x16) *x16 = projection->x16;
-    if (y16) *y16 = projection->y16;
+    /* Only a corner the game pinned leaves its packed pixel: it is drawn where an exact divide puts it. */
+    const bool exact = projection->clamped && projection->unbounded && precision_unpin();
+    if (x16) *x16 = exact ? projection->exact_x16 : projection->x16;
+    if (y16) *y16 = exact ? projection->exact_y16 : projection->y16;
     if (z) *z = projection->z;
     return GTE_PRECISION_LOOKUP_ACCEPTED;
 }
@@ -1014,6 +1033,9 @@ extern "C" GtePrecisionLookupResult gte_precision_load_identity(
         *identity = result == GTE_PRECISION_LOOKUP_ACCEPTED ? projection->identity : 0u;
     return result;
 }
+
+extern "C" int gte_precision_unpin_enabled(void) { return precision_unpin(); }
+extern "C" void gte_precision_unpin_set(int enabled) { s_precision_unpin = enabled ? 1 : 0; }
 
 extern "C" int gte_precision_word_clamped(uint32_t addr, uint32_t packed) {
     const PreciseProjection *projection = nullptr;
@@ -1580,6 +1602,30 @@ void gte_rtps_internal(GTEState* gte, int16_t* V, bool setMac0) {
         s_precise_sxy[2].saturated =
             static_cast<int16_t>(gte->SXY[2] & 0xFFFF) != sx ||
             static_cast<int16_t>((uint32_t)gte->SXY[2] >> 16) != sy;
+        /* The GTE's divide stops at twice the focal length and its screen at 1023: an exact divide does not. */
+        const bool stopped = s_precise_sxy[2].saturated || (uint32_t)gte->SZ[3] * 2 <= (uint32_t)gte->H;
+        s_precise_sxy[2].unbounded = 0;
+        if (stopped && gte->SZ[3] != 0 && (do_squash || xterm == (int64_t)gte->IR1 * h_div_sz)) {
+            const int64_t exact = ((int64_t)gte->H << 16) / gte->SZ[3];
+            int64_t exact_x = (int64_t)gte->IR1 * exact;
+            if (do_squash) exact_x = exact_x * s_ws_xnum / s_ws_xden;
+            int64_t exact_y = (int64_t)gte->IR2 * exact;
+            /* Too far for a 16.16 coordinate once the screen centre is added: nearer along the same ray from that centre. */
+            const int64_t room_x = kUnboundedLimit16 - 1 - std::abs((int64_t)gte->OFX);
+            const int64_t room_y = kUnboundedLimit16 - 1 - std::abs((int64_t)gte->OFY);
+            double nearer = 1.0;
+            if (std::abs(exact_x) > room_x) nearer = (double)room_x / (double)std::abs(exact_x);
+            if (std::abs(exact_y) > room_y) nearer = std::min(nearer, (double)room_y / (double)std::abs(exact_y));
+            if (room_x > 0 && room_y > 0) {
+                if (nearer < 1.0) {
+                    exact_x = (int64_t)((double)exact_x * nearer);
+                    exact_y = (int64_t)((double)exact_y * nearer);
+                }
+                s_precise_sxy[2].exact_x16 = (int32_t)(gte->OFX + exact_x);
+                s_precise_sxy[2].exact_y16 = (int32_t)(gte->OFY + exact_y);
+                s_precise_sxy[2].unbounded = 1;
+            }
+        }
         /* Perspective textures need the original camera depth, not a value
          * clamped into SZ3, and must reject the GTE's near divide-overflow
          * region. Geometry can still use the retained X/Y when this bit is 0. */
@@ -2733,7 +2779,26 @@ extern "C" void gte_test_seed_precise_projection(uint32_t index,
     p.z = z;
     p.valid = 1;
     p.saturated = 0;
+    p.unbounded = 0;
     p.perspective_valid = 1;
+}
+
+extern "C" void gte_test_set_precise_exact(uint32_t index, int saturated, int unbounded, int32_t exact_x16, int32_t exact_y16) {
+    if (index >= 4) return;
+    auto &p = PSXRecomp::GTE::s_precise_sxy[index];
+    p.saturated = saturated ? 1 : 0;
+    p.unbounded = unbounded ? 1 : 0;
+    p.exact_x16 = exact_x16;
+    p.exact_y16 = exact_y16;
+}
+
+extern "C" void gte_test_get_precise_exact(uint32_t index, int *saturated, int *unbounded, int32_t *exact_x16, int32_t *exact_y16) {
+    if (index >= 4) return;
+    const auto &p = PSXRecomp::GTE::s_precise_sxy[index];
+    if (saturated) *saturated = p.saturated;
+    if (unbounded) *unbounded = p.unbounded;
+    if (exact_x16) *exact_x16 = p.exact_x16;
+    if (exact_y16) *exact_y16 = p.exact_y16;
 }
 
 extern "C" void gte_test_set_precise_perspective_valid(uint32_t index,

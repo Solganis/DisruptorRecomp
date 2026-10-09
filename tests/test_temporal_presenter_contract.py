@@ -54,10 +54,10 @@ require(
     "second pass",
 )
 require(
-    "else if (show) show=opaque && !(t && s_temp_under[j*TEXV+18]!=0.0f) && (!covered || was->modelled);"
+    "else if (show) show=opaque && !(t && s_temp_under[j*TEXV+18]!=0.0f) && (!covered || (was->modelled && show==1));"
     in underlay,
-    "a departed face that is no sprite must be opaque, and only a GTE face may go over the scene: a grown copy "
-    "has no depth of its own",
+    "a departed face that is no sprite must be opaque, and only a GTE face with all its depths may go over the "
+    "scene: a grown copy has no depth of its own and a held corner has none",
 )
 require(
     "if (show && was->sprite) show=covered && !temporal_sprite_replaced(s,&p->gone_to[ti]);" in underlay,
@@ -195,10 +195,10 @@ depths = function_body(renderer, "static void glb_set_temporal_depth_triangle(in
 require(
     "const int partial = !exact && s_next_temporal_depth == 2;" in take
     and ": partial ? TEMPORAL_PARTIAL_IDENTITY" in take
-    and partly.count("s_precise_vertex_depth[i] = z[i];") == 2
-    and partly.index("                    s_precise_vertex_depth[i] = z[i];") < partly.index("    if (resolved != count) {")
-    and "            s_precise_vertex_partial = 1;\n#endif\n        }\n        return 0;" in partly
-    and "    s_precise_vertex_partial = 0;\n#endif\n    if (!gte_geometry_correction_enabled())" in partly
+    and partly.count("s_precise_vertex_depth[i] = psx_pinned_corner_depth(unpin, pinned[i], z[i]);") == 2
+    and partly.index("                    s_precise_vertex_depth[i] = psx_pinned_corner_depth(unpin, pinned[i], z[i]);") < partly.index("    if (resolved != count) {")
+    and "            s_precise_vertex_partial = 1;\n#endif\n            psx_pinned_places(count, unpin, pinned," in partly
+    and "    s_precise_vertex_partial = 0;\n#endif\n    s_pinned_places.unpinned = 0;\n    if (!gte_geometry_correction_enabled())" in partly
     and "        if (geometry_enabled && s_precise_vertex_partial)\n            gr_set_temporal_depth_triangle(2," in queued
     and queued.index("gr_set_precise_triangle(0, 0,0, 0,0, 0,0);") < queued.index("gr_set_temporal_depth_triangle(2,")
     and "if (enabled == 2 ? z0 < 0.0f || z1 < 0.0f || z2 < 0.0f || z0 + z1 + z2 <= 0.0f" in depths
@@ -251,9 +251,10 @@ require(
     "a corner the game pins to its guard band must keep its projection only when the stored word is that projection pinned to the retail band",
 )
 require(
+    "                pinned[i] = gte_precision_word_clamped(addr, word);\n"
     "                if ((fixed16_integer_floor(precise_x[i]) != raw_x[i] ||\n"
     "                     fixed16_integer_floor(precise_y[i]) != raw_y[i]) &&\n"
-    "                    !gte_precision_word_clamped(addr, word)) {\n"
+    "                    !pinned[i]) {\n"
     "                    reject = GPU_GEOMETRY_REJECT_INTEGER_MISMATCH;" in partly,
     "a projection off its packet word must be refused unless the game pinned that word",
 )
@@ -276,7 +277,7 @@ require(
     and "const int sprite = !world && s_geometry_correction && s_sprite_depth > 0.0f;" in take
     and "px[i] = (float)xs[i] + (sprite ? s_sprite_sides[xs[i] == s_sprite_x ? 0 : 2] : 0.0f);" in take
     and "py[i] = (float)ys[i] + (sprite ? s_sprite_sides[ys[i] == s_sprite_y ? 1 : 3] : 0.0f);" in take
-    and "return (world || sprite ? 1 : 0) | (exact ? 2 : 0);" in take
+    and "return (world || sprite || unpinned ? 1 : 0) | (exact ? 2 : 0);" in take
     and "    memcpy(s_sprite_sides, s_next_sprite_sides, sizeof(s_sprite_sides));\n    memset(s_next_sprite_sides, 0, sizeof(s_next_sprite_sides));\n    s_sprite_x = x; s_sprite_y = y;\n" in rect,
     "a sprite's unrounded place must reach the presentation of its own rectangle only, and only with geometry correction",
 )
