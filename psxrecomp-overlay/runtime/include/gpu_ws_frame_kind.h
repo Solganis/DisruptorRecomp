@@ -62,13 +62,14 @@ static inline void psx_ws_frame_kinds_area(PsxWsFrameKinds *kinds, uint32_t x, u
     kinds->told = 0;
 }
 
-/* The game uploaded or copied a picture to (x, y): a buffer it lands in shows that from now on, a flat frame. */
+/* The game uploaded or copied a picture to (x, y): a buffer it lands in shows that from now on, a flat frame and no front-end one. */
 static inline void psx_ws_frame_kinds_pictured(PsxWsFrameKinds *kinds, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                                                uint32_t wide, uint32_t tall) {
     for (int i = 0; i < 2; ++i) {
         PsxWsFrameBuffer *buffer = &kinds->buffers[i];
         if (x >= buffer->x + wide || x + w <= buffer->x || y >= buffer->y + tall || y + h <= buffer->y) continue;
         buffer->flat = 1;
+        buffer->menu = 0;
     }
 }
 

@@ -375,9 +375,10 @@ static int ws_native_43(int displayed) {
 int gpu_ws_present_native_43(void) { return ws_native_43(0); }
 int gpu_ws_displayed_native_43(void) { return ws_native_43(1); }
 void gpu_ws_tell_frame_kind(int flat) { psx_ws_frame_kinds_tell(&ws_frame_kinds, flat); }
-/* The frame on display is a full-2D one of a GTE-detected game: uploads and copies make it, and they do not reach the corrected mirror. */
+/* The frame on display is a full-2D one of a GTE-detected game and not the front end's: uploads and copies make it, and they do not reach the corrected mirror. */
 int gpu_ws_displayed_flat(void) {
-    return ws_gte_game_mode_cfg && psx_ws_frame_kinds_displayed(&ws_frame_kinds, display_area_x, display_area_y) == 1;
+    return ws_gte_game_mode_cfg && !gpu_ws_displayed_menu() &&
+           psx_ws_frame_kinds_displayed(&ws_frame_kinds, display_area_x, display_area_y) == 1;
 }
 
 /* Squash applies only when configured AND the frame is being stretched. */

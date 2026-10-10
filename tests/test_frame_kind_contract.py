@@ -149,9 +149,10 @@ require(
 )
 require(
     "int gpu_ws_displayed_flat(void) {\n"
-    "    return ws_gte_game_mode_cfg && psx_ws_frame_kinds_displayed(&ws_frame_kinds, display_area_x, display_area_y) == 1;\n}" in gpu
+    "    return ws_gte_game_mode_cfg && !gpu_ws_displayed_menu() &&\n"
+    "           psx_ws_frame_kinds_displayed(&ws_frame_kinds, display_area_x, display_area_y) == 1;\n}" in gpu
     and "int  gpu_ws_displayed_flat(void);" in header,
-    "the present must be able to ask whether the frame on display is a flat one",
+    "the present must be able to ask whether the frame on display is a flat one that is not the front end's",
 )
 require(
     "        bool wide_present = (!fmv_frame && !di.depth24 && g_ws_engaged &&\n"

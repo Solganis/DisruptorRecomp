@@ -258,6 +258,19 @@ void test_a_front_end_screen_is_flat_and_shown_wide() {
     expect(!psx_ws_frame_kinds_menu(&kinds) && !psx_ws_frame_kinds_displayed_menu(&kinds, 0, 240), "a world drawn into that buffer takes its place");
 }
 
+/* A new game goes from the front end to the loading screen with no drawing area between them. */
+void test_a_picture_ends_a_front_end_frame() {
+    PsxWsFrameKinds kinds{};
+    frame(kinds, 0, 0);
+    psx_ws_frame_kinds_menu_begin(&kinds);
+    frame(kinds, 0, 240);
+    psx_ws_frame_kinds_menu_begin(&kinds);
+    psx_ws_frame_kinds_pictured(&kinds, 160, 124, 64, 12, 320, 240);
+    expect(!psx_ws_frame_kinds_displayed_menu(&kinds, 0, 0) && psx_ws_frame_kinds_displayed_menu(&kinds, 0, 240),
+           "a picture copied over a front-end frame ends it there, and leaves the other buffer's");
+    expect(psx_ws_frame_kinds_displayed(&kinds, 0, 0) == 1 && psx_ws_frame_kinds_menu(&kinds), "which stays a flat frame, and the frame being drawn stays the front end's");
+}
+
 }  // namespace
 
 int main() {
@@ -269,6 +282,7 @@ int main() {
     test_a_picture_put_into_a_buffer_is_what_it_shows();
     test_a_list_asks_about_the_buffer_drawn_last();
     test_a_front_end_screen_is_flat_and_shown_wide();
+    test_a_picture_ends_a_front_end_frame();
     if (g_failures) return 1;
     std::cout << "GPU widescreen frame kind tests passed\n";
     return 0;
