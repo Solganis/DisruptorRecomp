@@ -61,7 +61,8 @@ int disruptor_present_rate_control(int *accepted) {
     if (!enabled) ImGui::EndDisabled();
     if (!enabled)
         ImGui::TextDisabled("In-between frames are off.");
-    else if (std::getenv("PSX_FRAME_INTERPOLATION_FPS"))
+    else if (const char *launcher = std::getenv("PSX_FRAME_INTERPOLATION_FPS");
+             launcher && disruptor_present_rate_accepted(std::atoi(launcher)))
         ImGui::TextDisabled(
             "Pictures shown per second. Applied now and saved, but "
             "PSX_FRAME_INTERPOLATION_FPS of the launcher replaces it at the next start.");

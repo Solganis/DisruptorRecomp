@@ -1104,6 +1104,9 @@ struct UserSettings {
     bool has_geometry_correction = false; bool geometry_correction = false;
     bool has_perspective_textures = false; bool perspective_textures = false;
     bool has_frame_unlock = false; bool frame_unlock = false;
+    bool has_skip_intro = false; bool skip_intro = false;
+    bool has_language_disc = false; std::string language_disc;  // image of another region's disc, "" for none
+    bool has_language_discs = false; std::vector<std::string> language_discs;  // the ones named before, for a launcher to offer again
     bool has_hud_scale = false; int hud_scale = 100;
     bool has_improved_shadows = false; bool improved_shadows = false;
 };

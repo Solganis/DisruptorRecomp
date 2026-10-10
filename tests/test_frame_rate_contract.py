@@ -251,7 +251,7 @@ require(
 )
 require(
     "(target_fps < 30 || target_fps > 1000))" in host
-    and "if (fps == 0 || fps >= 30) g_frame_interpolation_fps = fps;" in host
+    and "if (fps == 0 || (fps >= 30 && fps <= 1000)) g_frame_interpolation_fps = fps;" in host
     and "if (us.has_frame_interpolation_fps)\n            g_frame_interpolation_fps = us.frame_interpolation_fps;"
     in host,
     "the host must take a rate from 30 FPS, from the menu, the environment and the saved settings",
@@ -263,7 +263,7 @@ require(
     "the presenter must run at any rate from 30 FPS",
 )
 require(
-    "if (s.frame_interpolation_fps == 0 || s.frame_interpolation_fps >= 30)" in settings_loader,
+    "(s.frame_interpolation_fps >= 30 && s.frame_interpolation_fps <= 1000))" in settings_loader,
     "settings.toml must keep an in-between frame rate from 30 FPS",
 )
 

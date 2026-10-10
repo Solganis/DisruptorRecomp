@@ -1,16 +1,27 @@
 #include "disc_import.h"
+#include "launcher_settings.h"
+#include "region_disc.h"
+#include "startup_log.h"
 
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <uxtheme.h>
+#include <vssym32.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <cwchar>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace disruptor::launcher;
@@ -18,6 +29,21 @@ namespace {
 constexpr UINT progress_message = WM_APP + 1;
 constexpr UINT finished_message = WM_APP + 2;
 constexpr int browse_id = 100, play_id = 101, cancel_id = 102, help_id = 103;
+constexpr int language_id = 104, add_disc_id = 105, remove_disc_id = 106, reset_id = 107, saves_id = 108;
+constexpr int preset_base = 200, option_base = 1000;
+constexpr int client_width = 680, client_height = 664;
+constexpr int slider_steps = 200;
+constexpr size_t log_lines = 8;
+constexpr LRESULT status_lines = 3;
+constexpr const wchar_t* image_filter =
+    L"Disc images (*.cue;*.bin;*.iso;*.img)\0*.cue;*.bin;*.iso;*.img\0CUE sheets (*.cue)\0*.cue\0"
+    L"Raw images (*.bin;*.iso;*.img)\0*.bin;*.iso;*.img\0\0";
+constexpr const wchar_t* page_notes[] = {
+    L"HUD size applies in widescreen.",
+    L"Perspective textures and in-between frames need exact geometry.",
+    L"Key bindings are in keybinds.ini beside the launcher.",
+    L"",
+};
 
 fs::path executable_directory() {
     std::wstring buffer(32768, L'\0');
@@ -88,42 +114,240 @@ HANDLE start_game(const fs::path& root, const VerifiedDisc& disc) {
     return process.hProcess;
 }
 
+std::wstring widen(const std::string& ascii) { return {ascii.begin(), ascii.end()}; }
+
+std::wstring value_text(const Option& option, int value) {
+    wchar_t text[32] = L"";
+    if (option.unit == Unit::percent) swprintf(text, 32, L"%d%%", value);
+    else if (option.unit == Unit::frames) swprintf(text, 32, L"%d FPS", value);
+    else if (option.unit == Unit::thousandths) swprintf(text, 32, L"%.3f", value / 1000.0);
+    return text;
+}
+
+// Sensitivity spans 0.005 to 2.000, so its slider is logarithmic like the in-game one.
+int to_position(const Option& option, int value, int highest) {
+    if (option.unit != Unit::thousandths) return value;
+    const double span = std::log(static_cast<double>(highest) / option.lowest);
+    return static_cast<int>(std::lround(std::log(static_cast<double>(value) / option.lowest) / span * slider_steps));
+}
+
+int from_position(const Option& option, int position, int highest) {
+    if (option.unit != Unit::thousandths) return position;
+    const double ratio = static_cast<double>(highest) / option.lowest;
+    const double value = option.lowest * std::pow(ratio, static_cast<double>(position) / slider_steps);
+    return std::clamp(static_cast<int>(std::lround(value)), option.lowest, highest);
+}
+
+std::optional<fs::path> pick_image(HWND owner, const wchar_t* title) {
+    std::wstring selected(32768, L'\0');
+    OPENFILENAMEW picker{};
+    picker.lStructSize = sizeof(picker);
+    picker.hwndOwner = owner;
+    picker.lpstrTitle = title;
+    picker.lpstrFilter = image_filter;
+    picker.lpstrFile = selected.data();
+    picker.nMaxFile = static_cast<DWORD>(selected.size());
+    picker.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    if (!GetOpenFileNameW(&picker)) return std::nullopt;
+    selected.resize(wcslen(selected.c_str()));
+    return fs::path(selected);
+}
+
+// take: an image whose kind the worker finds out. look: only the descriptions of the listed discs.
+enum class Task { import, verify, language, take, look };
+using Regions = std::map<std::string, std::optional<RegionDisc>>;
 struct Update { std::wstring status; unsigned percent; };
-struct Result { VerifiedDisc disc; std::wstring error; bool play = false; };
+struct Result {
+    Task task = Task::verify;
+    VerifiedDisc disc;
+    std::optional<RegionDisc> language;
+    fs::path image;
+    Regions regions;
+    std::wstring error, language_error;
+    bool play = false;
+};
+struct Placed { HWND window; int x, y, width, height; bool heading; };
+struct Row { const Option* option; HWND label = nullptr, control = nullptr, value = nullptr; };
 
 struct App {
     fs::path root;
-    HWND window = nullptr, status = nullptr, progress = nullptr;
+    SettingsFile settings;
+    HWND window = nullptr, status = nullptr, progress = nullptr, disc_text = nullptr;
     HWND browse = nullptr, play = nullptr, cancel = nullptr, auto_play = nullptr;
+    HWND language = nullptr, language_note = nullptr, add_disc = nullptr, remove_disc = nullptr;
+    HWND tabs = nullptr, page_note = nullptr, reset = nullptr;
+    std::vector<HWND> preset_buttons;
+    std::vector<Placed> placed;
+    std::vector<Row> rows;
+    std::vector<std::string> discs;
+    Regions regions; // filled by the worker only: an image on a share that is gone must not stall the window
     HFONT body_font = nullptr, heading_font = nullptr;
+    HBRUSH page_brush = nullptr;
     std::thread worker;
     std::atomic_bool cancelled{false};
     bool busy = false, closing = false;
     HANDLE game = nullptr;
     VerifiedDisc verified;
+
+    explicit App(fs::path folder) : root(std::move(folder)), settings(root / "settings.toml") {}
     ~App() {
         cancelled = true;
         if (worker.joinable()) worker.join();
         if (game) CloseHandle(game);
         if (body_font) DeleteObject(body_font);
         if (heading_font) DeleteObject(heading_font);
+        if (page_brush) DeleteObject(page_brush);
+    }
+
+    void say(const std::wstring& text) {
+        std::wstring lines;
+        for (const wchar_t letter : text) {
+            if (letter == L'\n' && (lines.empty() || lines.back() != L'\r')) lines += L'\r';
+            lines += letter;
+        }
+        if (!settings.readable() && text != settings_error()) lines += std::wstring(L"\r\n") + settings_error();
+        SetWindowTextW(status, lines.c_str());
+        ShowScrollBar(status, SB_VERT, SendMessageW(status, EM_GETLINECOUNT, 0, 0) > status_lines);
+    }
+    void match_page() {
+        COLORREF colour = GetSysColor(COLOR_3DFACE);
+        if (HTHEME theme = OpenThemeData(tabs, L"TAB")) {
+            // The theme's fill colour hint is not the colour it paints, so a pane is drawn and its middle read.
+            RECT pane{0, 0, 64, 64};
+            HDC screen = GetDC(tabs), drawn = CreateCompatibleDC(screen);
+            HBITMAP bitmap = CreateCompatibleBitmap(screen, pane.right, pane.bottom);
+            HGDIOBJ before = SelectObject(drawn, bitmap);
+            if (SUCCEEDED(DrawThemeBackground(theme, drawn, TABP_PANE, 0, &pane, nullptr)))
+                colour = GetPixel(drawn, pane.right / 2, pane.bottom / 2);
+            SelectObject(drawn, before);
+            DeleteObject(bitmap);
+            DeleteDC(drawn);
+            ReleaseDC(tabs, screen);
+            CloseThemeData(theme);
+        }
+        if (page_brush) DeleteObject(page_brush);
+        page_brush = CreateSolidBrush(colour);
+    }
+    const wchar_t* settings_error() const {
+        return settings.readable()
+            ? L"Cannot write settings.toml. Put the extracted build in a writable Games folder."
+            : L"settings.toml is not valid TOML, so it is left as it is. Fix or delete it, then reopen the launcher.";
+    }
+    bool editable() const { return !busy && !game && settings.readable(); }
+
+    HWND add(HWND parent, const wchar_t* type, const wchar_t* text, DWORD style, DWORD extended,
+             int x, int y, int width, int height, int id = 0, bool heading = false) {
+        HWND handle = CreateWindowExW(extended, type, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0, parent,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
+        placed.push_back({handle, x, y, width, height, heading});
+        return handle;
+    }
+    void lay_out() {
+        const int dpi = static_cast<int>(GetDpiForWindow(window));
+        const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
+        HFONT body = CreateFontW(-MulDiv(10, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+            FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+        HFONT heading = CreateFontW(-MulDiv(21, dpi, 72), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE,
+            FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+        for (const auto& item : placed) {
+            SendMessageW(item.window, WM_SETFONT, reinterpret_cast<WPARAM>(item.heading ? heading : body), TRUE);
+            SetWindowPos(item.window, nullptr, scale(item.x), scale(item.y), scale(item.width), scale(item.height),
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        if (body_font) DeleteObject(body_font);
+        if (heading_font) DeleteObject(heading_font);
+        body_font = body;
+        heading_font = heading;
+    }
+
+    void show_languages() {
+        discs = settings.language_discs();
+        SendMessageW(language, CB_RESETCONTENT, 0, 0);
+        SendMessageW(language, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"English (the US disc alone)"));
+        int selected = 0;
+        std::wstring note = L"Add a French, German or Japanese disc image to play in that language.";
+        for (size_t index = 0; index < discs.size(); ++index) {
+            const auto looked = regions.find(discs[index]);
+            const RegionDisc* disc = looked != regions.end() && looked->second ? &*looked->second : nullptr;
+            const std::wstring kind = disc ? widen(disc->language)
+                : looked == regions.end() ? L"Disc image" : L"Unknown or missing";
+            const std::wstring label = kind + L" (" + from_utf8(discs[index]).filename().wstring() + L")";
+            SendMessageW(language, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+            if (discs[index] != settings.language_disc()) continue;
+            selected = static_cast<int>(index) + 1;
+            note = disc ? describe(*disc) + L" The image is used where it is."
+                : looked == regions.end() ? L""
+                : L"This image is missing or is not a known disc. Choose another one or English.";
+        }
+        SendMessageW(language, CB_SETCURSEL, selected, 0);
+        SetWindowTextW(language_note, note.c_str());
+        EnableWindow(remove_disc, editable() && selected > 0);
+    }
+    void show_settings() {
+        const int page = static_cast<int>(SendMessageW(tabs, TCM_GETCURSEL, 0, 0));
+        for (const auto& row : rows) {
+            const Option& option = *row.option;
+            const int value = settings.shown(option), highest = settings.highest(option);
+            if (option.kind == Kind::toggle) {
+                SendMessageW(row.control, BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0);
+            } else if (option.kind == Kind::choice) {
+                SendMessageW(row.control, CB_SETCURSEL, static_cast<WPARAM>(value), 0);
+            } else {
+                const bool logarithmic = option.unit == Unit::thousandths;
+                SendMessageW(row.control, TBM_SETRANGEMIN, FALSE, logarithmic ? 0 : option.lowest);
+                SendMessageW(row.control, TBM_SETRANGEMAX, FALSE, logarithmic ? slider_steps : highest);
+                SendMessageW(row.control, TBM_SETPOS, TRUE, to_position(option, value, highest));
+                SetWindowTextW(row.value, value_text(option, value).c_str());
+            }
+            const bool on = editable() && settings.applies(option);
+            const int shown = static_cast<int>(option.page) == page ? SW_SHOW : SW_HIDE;
+            for (HWND part : {row.label, row.control, row.value}) {
+                if (!part) continue;
+                EnableWindow(part, on);
+                ShowWindow(part, shown);
+            }
+        }
+        SetWindowTextW(page_note, page_notes[std::clamp(page, 0, 3)]);
     }
     void controls() {
         EnableWindow(browse, !busy && !game);
         EnableWindow(play, !busy && !game && verified.profile);
         EnableWindow(cancel, busy && !closing);
         EnableWindow(auto_play, !busy && !game);
+        for (HWND button : preset_buttons) EnableWindow(button, editable());
+        for (HWND part : {language, add_disc, reset}) EnableWindow(part, editable());
+        const std::wstring disc = verified.profile
+            ? std::wstring(verified.profile->label) + L", verified."
+            : L"Not installed. Browse to your USA disc image (SLUS-00224) or drop it on this window.";
+        SetWindowTextW(disc_text, disc.c_str());
+        show_languages();
+        show_settings();
     }
-    void begin(fs::path source, bool importing, bool launch) {
+    void saved(bool written, const std::wstring& done = {}) {
+        if (!written) say(settings_error());
+        else if (!done.empty()) say(done);
+        controls();
+    }
+
+    void begin(Task task, fs::path source, bool launch) {
         if (worker.joinable()) worker.join();
-        verified = {}; // release previous read locks before replacing data
+        if (launch) settings.load(); // the game reads the file, not what this window last saw of it
+        const fs::path home = verified.data;
+        const std::string spoken = settings.language_disc();
+        std::vector<std::string> listed = settings.language_discs();
+        if (task == Task::import || task == Task::verify) verified = {}; // release previous read locks before replacing data
         cancelled = false;
         busy = true;
         controls();
         SendMessageW(progress, PBM_SETPOS, 0, 0);
-        SetWindowTextW(status, importing ? L"Preparing to import your image..." : L"Checking installed game data...");
-        worker = std::thread([this, source = std::move(source), importing, launch] {
+        if (task != Task::look)
+            say(task == Task::import ? L"Preparing to import your image..."
+                : task == Task::verify ? L"Checking installed game data..."
+                : task == Task::take ? L"Looking at the image..." : L"Checking the language disc...");
+        worker = std::thread([this, task, source = std::move(source), launch, home, spoken, listed]() mutable {
             auto result = std::make_unique<Result>();
+            result->task = task;
+            result->image = source;
             result->play = launch;
             try {
                 unsigned previous = 101;
@@ -136,39 +360,204 @@ struct App {
                     if (PostMessageW(window, progress_message, 0, reinterpret_cast<LPARAM>(update.get())))
                         update.release();
                 };
-                result->disc = importing ? import_disc(source, root, cancelled, report)
-                                         : verify_disc(source, cancelled, report);
-                check_package(root, *result->disc.profile);
-                if (cancelled) {
-                    result->disc = {};
-                    result->error = L"Cancelled. Any completed import is kept; reopen the launcher to verify it again.";
+                if (task == Task::take && region_disc(source)) {
+                    if (home.empty())
+                        throw std::runtime_error("That is a disc of another region. Install the USA disc first: "
+                                                 "it is the game, and the other disc gives it a language.");
+                    result->task = Task::language;
+                }
+                if (result->task == Task::language) {
+                    result->language = check_region_disc(home, source);
+                    listed.push_back(utf8(source));
+                } else if (task == Task::import || task == Task::verify) {
+                    result->disc = task == Task::import ? import_disc(source, root, cancelled, report)
+                                                        : verify_disc(source, cancelled, report);
+                    check_package(root, *result->disc.profile);
+                    if (cancelled) {
+                        result->disc = {};
+                        result->error = L"Cancelled. Any completed import is kept; reopen the launcher to verify it again.";
+                    } else if (launch && !spoken.empty()) {
+                        report(L"Checking the language disc...", 100);
+                        try {
+                            check_region_disc(result->disc.data, from_utf8(spoken));
+                        } catch (const std::exception& error) {
+                            result->language_error = L"The language disc cannot be used. " + error_text(error);
+                        }
+                    }
                 }
             } catch (const std::exception& error) { result->error = error_text(error); }
+            for (const std::string& path : listed) result->regions.emplace(path, region_disc(from_utf8(path)));
             if (PostMessageW(window, finished_message, 0, reinterpret_cast<LPARAM>(result.get())))
                 result.release();
         });
     }
+    void take_image(const fs::path& image) {
+        if (!busy && !game) begin(Task::take, image, SendMessageW(auto_play, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    }
+    void look() {
+        if (!busy && !settings.language_discs().empty()) begin(Task::look, {}, false);
+    }
     void launch() {
         try {
             game = start_game(root, verified);
-            SetWindowTextW(status, L"Disruptor is running. You can close this launcher and keep playing.");
+            const std::wstring overriding = environment_overrides();
+            say(std::wstring(L"Disruptor is running. You can close this launcher and keep playing.") +
+                (overriding.empty() ? L"" : L"\nPSX_ environment variables are set, and the game lets some of them "
+                                            L"replace settings for this run: " + overriding));
             SetTimer(window, 1, 500, nullptr);
         } catch (const std::exception& error) {
-            SetWindowTextW(status, error_text(error).c_str());
+            say(error_text(error));
         }
         controls();
     }
 };
 
-HWND control(App& app, const wchar_t* type, const wchar_t* text, DWORD style,
-             int x, int y, int width, int height, int id = 0, bool heading = false) {
-    const int dpi = static_cast<int>(GetDpiForWindow(app.window));
-    const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
-    HWND handle = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style,
-        scale(x), scale(y), scale(width), scale(height), app.window,
-        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
-    SendMessageW(handle, WM_SETFONT, reinterpret_cast<WPARAM>(heading ? app.heading_font : app.body_font), TRUE);
-    return handle;
+// Controls on a tab page are the tab control's children, so their messages are passed on to the window.
+LRESULT CALLBACK pass_to_window(HWND tab, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    if (message == WM_COMMAND || message == WM_HSCROLL || message == WM_CTLCOLORSTATIC || message == WM_CTLCOLORBTN)
+        return SendMessageW(GetParent(tab), message, wparam, lparam);
+    return DefSubclassProc(tab, message, wparam, lparam);
+}
+
+void create_controls(App& app) {
+    HWND window = app.window;
+    app.add(window, L"STATIC", L"Disruptor Recompiled", SS_LEFT, 0, 28, 16, 624, 42, 0, true);
+
+    app.add(window, L"STATIC", L"Disc", SS_LEFT, 0, 30, 72, 86, 20);
+    app.disc_text = app.add(window, L"STATIC", L"", SS_LEFT, 0, 124, 72, 388, 36);
+    app.browse = app.add(window, L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, 0, 524, 68, 126, 30, browse_id);
+    app.auto_play = app.add(window, L"BUTTON", L"Start the game after importing",
+                            BS_AUTOCHECKBOX | WS_TABSTOP, 0, 124, 110, 388, 22);
+    SendMessageW(app.auto_play, BM_SETCHECK, BST_CHECKED, 0);
+
+    app.add(window, L"STATIC", L"Language", SS_LEFT, 0, 30, 146, 86, 20);
+    app.language = app.add(window, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0,
+                           124, 142, 250, 220, language_id);
+    app.add_disc = app.add(window, L"BUTTON", L"Add disc...", BS_PUSHBUTTON | WS_TABSTOP, 0,
+                           384, 141, 128, 28, add_disc_id);
+    app.remove_disc = app.add(window, L"BUTTON", L"Remove", BS_PUSHBUTTON | WS_TABSTOP, 0,
+                              524, 141, 126, 28, remove_disc_id);
+    app.language_note = app.add(window, L"STATIC", L"", SS_LEFT, 0, 124, 174, 526, 20);
+
+    app.tabs = app.add(window, WC_TABCONTROLW, L"", WS_CLIPCHILDREN | WS_TABSTOP, WS_EX_CONTROLPARENT,
+                       30, 202, 620, 268);
+    SetWindowSubclass(app.tabs, pass_to_window, 1, 0);
+    int index = 0;
+    for (const wchar_t* label : page_labels()) {
+        TCITEMW item{};
+        item.mask = TCIF_TEXT;
+        item.pszText = const_cast<wchar_t*>(label);
+        SendMessageW(app.tabs, TCM_INSERTITEMW, static_cast<WPARAM>(index++), reinterpret_cast<LPARAM>(&item));
+    }
+    int rows_on_page[4] = {};
+    index = 0;
+    for (const auto& option : options()) {
+        const int y = 38 + 28 * rows_on_page[static_cast<int>(option.page)]++;
+        const int id = option_base + index++;
+        Row row{&option};
+        if (option.kind == Kind::toggle) {
+            row.control = app.add(app.tabs, L"BUTTON", option.label, BS_AUTOCHECKBOX | WS_TABSTOP, 0,
+                                  18, y, 560, 24, id);
+        } else {
+            row.label = app.add(app.tabs, L"STATIC", option.label, SS_LEFT, 0, 18, y + 4, 250, 20);
+            if (option.kind == Kind::choice) {
+                row.control = app.add(app.tabs, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0,
+                                      280, y, 250, 240, id);
+                for (const wchar_t* label : option.choices)
+                    SendMessageW(row.control, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+            } else {
+                row.control = app.add(app.tabs, TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_NOTICKS | WS_TABSTOP, 0,
+                                      274, y, 256, 26, id);
+                row.value = app.add(app.tabs, L"STATIC", L"", SS_LEFT, 0, 538, y + 4, 70, 20);
+            }
+        }
+        app.rows.push_back(row);
+    }
+    app.page_note = app.add(app.tabs, L"STATIC", L"", SS_LEFT, 0, 18, 238, 584, 20);
+
+    app.add(window, L"STATIC", L"Presets", SS_LEFT, 0, 30, 486, 86, 20);
+    int x = 124;
+    index = 0;
+    for (const auto& preset : presets()) {
+        const int width = static_cast<int>(wcslen(preset.label)) * 7 + 44;
+        app.preset_buttons.push_back(app.add(window, L"BUTTON", preset.label, BS_PUSHBUTTON | WS_TABSTOP, 0,
+                                             x, 480, width, 30, preset_base + index++));
+        x += width + 10;
+    }
+    app.reset = app.add(window, L"BUTTON", L"Reset settings", BS_PUSHBUTTON | WS_TABSTOP, 0,
+                        524, 480, 126, 30, reset_id);
+
+    app.status = app.add(window, L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
+                         WS_EX_CLIENTEDGE, 30, 520, 620, 66);
+    app.progress = app.add(window, PROGRESS_CLASSW, L"", 0, 0, 30, 592, 620, 12);
+    app.play = app.add(window, L"BUTTON", L"Play game", BS_DEFPUSHBUTTON | WS_TABSTOP, 0, 30, 612, 150, 38, play_id);
+    app.cancel = app.add(window, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP, 0, 190, 612, 100, 38, cancel_id);
+    app.add(window, L"BUTTON", L"Saves folder", BS_PUSHBUTTON | WS_TABSTOP, 0, 394, 612, 126, 38, saves_id);
+    app.add(window, L"BUTTON", L"Help", BS_PUSHBUTTON | WS_TABSTOP, 0, 530, 612, 120, 38, help_id);
+}
+
+void command(App& app, int id, int code) {
+    HWND window = app.window;
+    if ((id == browse_id || id == add_disc_id) && !app.busy && !app.game) {
+        const bool adding = id == add_disc_id;
+        const auto image = pick_image(window, adding ? L"Select a French, German or Japanese Disruptor disc image"
+                                                     : L"Select your Disruptor disc image");
+        if (!image) return;
+        if (!adding) app.take_image(*image);
+        else if (app.verified.profile) app.begin(Task::language, *image, false);
+        else app.say(L"Install the USA disc first: it is the game, and the other disc gives it a language.");
+    } else if ((id == play_id || id == IDOK) && !app.busy && !app.game && app.verified.profile) {
+        const auto cue = app.verified.cue;
+        app.begin(Task::verify, cue, true); // always verify again immediately before Play
+    } else if ((id == cancel_id || id == IDCANCEL) && app.busy) {
+        app.cancelled = true;
+        app.say(L"Cancelling...");
+    } else if (id == help_id) {
+        // Windows players may have no Markdown file association.
+        const auto guide = quote((app.root / "GETTING_STARTED.md").wstring());
+        const auto opened = ShellExecuteW(window, L"open", L"notepad.exe", guide.c_str(), app.root.c_str(), SW_SHOWNORMAL);
+        if (reinterpret_cast<INT_PTR>(opened) <= 32)
+            app.say(L"Open GETTING_STARTED.md in the build folder for setup and troubleshooting help.");
+    } else if (id == saves_id) {
+        ShellExecuteW(window, L"open", app.settings.saves_folder().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    } else if (!app.editable()) {
+        return;
+    } else if (id == language_id && code == CBN_SELCHANGE) {
+        const auto chosen = static_cast<size_t>(SendMessageW(app.language, CB_GETCURSEL, 0, 0));
+        if (chosen == 0) {
+            app.saved(app.settings.choose_language_disc({}), L"The game is in English.");
+        } else if (chosen > app.discs.size()) {
+            return;
+        } else if (app.verified.profile) {
+            app.begin(Task::language, from_utf8(app.discs[chosen - 1]), false);
+        } else {
+            app.say(L"Install the USA disc first: it is the game, and the other disc gives it a language.");
+            app.controls();
+        }
+    } else if (id == remove_disc_id) {
+        const auto chosen = static_cast<size_t>(SendMessageW(app.language, CB_GETCURSEL, 0, 0));
+        if (chosen > 0 && chosen <= app.discs.size())
+            app.saved(app.settings.forget_language_disc(app.discs[chosen - 1]),
+                      L"The disc is off the list. Its file is left as it is.");
+    } else if (id == reset_id) {
+        const int answer = MessageBoxW(window,
+            L"Put every setting on these tabs back to what a new installation has?\n"
+            L"The language, the key bindings and your saves stay as they are.",
+            L"Disruptor Launcher", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2);
+        if (answer == IDYES) app.saved(app.settings.reset(), L"The settings are those of a new installation again.");
+    } else if (id >= preset_base && id < preset_base + static_cast<int>(presets().size())) {
+        const Preset& preset = presets()[static_cast<size_t>(id - preset_base)];
+        app.saved(app.settings.apply(preset), std::wstring(L"Preset applied: ") + preset.label + L".");
+    } else if (id >= option_base && id < option_base + static_cast<int>(app.rows.size())) {
+        const Row& row = app.rows[static_cast<size_t>(id - option_base)];
+        if (row.option->kind == Kind::toggle && code == BN_CLICKED) {
+            const bool checked = SendMessageW(row.control, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            app.saved(app.settings.set(*row.option, checked ? 1 : 0));
+        } else if (row.option->kind == Kind::choice && code == CBN_SELCHANGE) {
+            const int chosen = static_cast<int>(SendMessageW(row.control, CB_GETCURSEL, 0, 0));
+            if (chosen >= 0) app.saved(app.settings.set(*row.option, chosen));
+        }
+    }
 }
 
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -183,66 +572,77 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN:
         SetBkMode(reinterpret_cast<HDC>(wparam), TRANSPARENT);
-        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        return reinterpret_cast<LRESULT>(GetParent(reinterpret_cast<HWND>(lparam)) == app->tabs && app->page_brush
+            ? app->page_brush : GetSysColorBrush(COLOR_WINDOW));
+    case WM_THEMECHANGED:
+        app->match_page();
+        InvalidateRect(window, nullptr, TRUE);
+        return 0;
     case WM_CREATE: {
-        const auto dpi = GetDpiForWindow(window);
-        app->body_font = CreateFontW(-MulDiv(11, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-            FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-        app->heading_font = CreateFontW(-MulDiv(23, dpi, 72), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE,
-            FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-        control(*app, L"STATIC", L"Disruptor Recompiled", SS_LEFT, 28, 24, 560, 44, 0, true);
-        control(*app, L"STATIC", L"Select your disc image once. The launcher copies and verifies it,\nthen starts the game. Your original files are kept.", SS_LEFT, 30, 80, 560, 50);
-        control(*app, L"STATIC", L"Supported: USA / SLUS-00224 \x2022 Raw BIN, CUE, IMG or ISO\nCooked ISO, PAL and Japanese images are not supported yet.", SS_LEFT, 30, 144, 560, 50);
-        app->status = control(*app, L"STATIC", L"No game data installed. Choose your disc image to get started.", SS_LEFT, 30, 208, 560, 82);
-        app->progress = control(*app, PROGRESS_CLASSW, L"", 0, 30, 300, 560, 18);
-        app->auto_play = control(*app, L"BUTTON", L"Start the game after importing", BS_AUTOCHECKBOX | WS_TABSTOP, 30, 330, 350, 28);
-        SendMessageW(app->auto_play, BM_SETCHECK, BST_CHECKED, 0);
-        app->browse = control(*app, L"BUTTON", L"Browse disc image...", BS_PUSHBUTTON | WS_TABSTOP, 30, 376, 180, 38, browse_id);
-        app->play = control(*app, L"BUTTON", L"Play game", BS_DEFPUSHBUTTON | WS_TABSTOP, 224, 376, 130, 38, play_id);
-        app->cancel = control(*app, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP, 368, 376, 100, 38, cancel_id);
-        control(*app, L"BUTTON", L"Help", BS_PUSHBUTTON | WS_TABSTOP, 482, 376, 108, 38, help_id);
+        create_controls(*app);
+        app->match_page();
+        app->lay_out();
+        DragAcceptFiles(window, TRUE);
+        DEVMODEW display{};
+        display.dmSize = sizeof(display);
+        if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &display))
+            app->settings.set_display_rate(display.dmDisplayFrequency);
+        app->settings.load();
         app->controls();
+        app->say(app->settings.readable()
+            ? L"No game data installed. Choose your disc image to get started.\n"
+              L"It is copied and verified, and your original files are kept."
+            : app->settings_error());
         try {
             auto installed = find_installed_disc(app->root);
             if (!installed.empty()) {
                 bool legacy = installed != installed_cue(app->root, supported_discs().front());
-                app->begin(installed, legacy, false);
+                app->begin(legacy ? Task::import : Task::verify, installed, false);
             }
-        } catch (const std::exception& error) { SetWindowTextW(app->status, error_text(error).c_str()); }
+        } catch (const std::exception& error) { app->say(error_text(error)); }
+        app->look();
         return 0;
     }
     case WM_COMMAND:
-        if (LOWORD(wparam) == browse_id && !app->busy && !app->game) {
-            std::wstring selected(32768, L'\0');
-            OPENFILENAMEW picker{};
-            picker.lStructSize = sizeof(picker);
-            picker.hwndOwner = window;
-            picker.lpstrTitle = L"Select your Disruptor disc image";
-            picker.lpstrFilter = L"Disc images (*.cue;*.bin;*.iso;*.img)\0*.cue;*.bin;*.iso;*.img\0CUE sheets (*.cue)\0*.cue\0Raw images (*.bin;*.iso;*.img)\0*.bin;*.iso;*.img\0\0";
-            picker.lpstrFile = selected.data();
-            picker.nMaxFile = static_cast<DWORD>(selected.size());
-            picker.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
-            if (GetOpenFileNameW(&picker)) {
-                selected.resize(wcslen(selected.c_str()));
-                app->begin(fs::path(selected), true, SendMessageW(app->auto_play, BM_GETCHECK, 0, 0) == BST_CHECKED);
-            }
-        } else if (LOWORD(wparam) == play_id && !app->busy && !app->game && app->verified.profile) {
-            const auto cue = app->verified.cue;
-            app->begin(cue, false, true); // always verify again immediately before Play
-        } else if (LOWORD(wparam) == cancel_id && app->busy) {
-            app->cancelled = true;
-            SetWindowTextW(app->status, L"Cancelling...");
-        } else if (LOWORD(wparam) == help_id) {
-            // Windows players may have no Markdown file association.
-            const auto guide = quote((app->root / "GETTING_STARTED.md").wstring());
-            const auto opened = ShellExecuteW(window, L"open", L"notepad.exe", guide.c_str(), app->root.c_str(), SW_SHOWNORMAL);
-            if (reinterpret_cast<INT_PTR>(opened) <= 32)
-                SetWindowTextW(app->status, L"Open GETTING_STARTED.md in the build folder for setup and troubleshooting help.");
+        command(*app, LOWORD(wparam), HIWORD(wparam));
+        return 0;
+    case WM_HSCROLL:
+        for (const auto& row : app->rows) {
+            if (row.control != reinterpret_cast<HWND>(lparam) || row.option->kind != Kind::slider) continue;
+            const int highest = app->settings.highest(*row.option), before = app->settings.shown(*row.option);
+            const int position = static_cast<int>(SendMessageW(row.control, TBM_GETPOS, 0, 0));
+            const bool moved = position != to_position(*row.option, before, highest);
+            const int value = moved ? from_position(*row.option, position, highest) : before;
+            SetWindowTextW(row.value, value_text(*row.option, value).c_str());
+            // One write when the slider is let go, not one for every step of a drag.
+            if (LOWORD(wparam) == TB_ENDTRACK && app->editable() && moved)
+                app->saved(app->settings.set(*row.option, value));
         }
         return 0;
+    case WM_NOTIFY:
+        if (reinterpret_cast<NMHDR*>(lparam)->hwndFrom == app->tabs &&
+            reinterpret_cast<NMHDR*>(lparam)->code == TCN_SELCHANGE)
+            app->show_settings();
+        return 0;
+    case WM_DROPFILES: {
+        const auto drop = reinterpret_cast<HDROP>(wparam);
+        std::wstring dropped(32768, L'\0');
+        const UINT size = DragQueryFileW(drop, 0, dropped.data(), static_cast<UINT>(dropped.size()));
+        DragFinish(drop);
+        dropped.resize(size);
+        if (size) app->take_image(fs::path(dropped));
+        return 0;
+    }
+    case WM_DPICHANGED: {
+        const auto* suggested = reinterpret_cast<const RECT*>(lparam);
+        SetWindowPos(window, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                     suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+        app->lay_out();
+        return 0;
+    }
     case progress_message: {
         std::unique_ptr<Update> update(reinterpret_cast<Update*>(lparam));
-        if (!app->cancelled) SetWindowTextW(app->status, update->status.c_str());
+        if (!app->cancelled) app->say(update->status);
         SendMessageW(app->progress, PBM_SETPOS, update->percent, 0);
         return 0;
     }
@@ -251,32 +651,63 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         if (app->worker.joinable()) app->worker.join();
         app->busy = false;
         if (app->closing) { DestroyWindow(window); return 0; }
-        if (!result->error.empty()) {
+        SendMessageW(app->progress, PBM_SETPOS, 0, 0);
+        app->regions = std::move(result->regions);
+        if (result->task == Task::take && result->error.empty() && !app->cancelled) {
+            app->begin(Task::import, result->image, result->play); // no disc of another region: the game disc
+            return 0;
+        }
+        if (result->task == Task::look || (result->task == Task::take && result->error.empty())) {
+            if (app->cancelled) app->say(L"Cancelled.");
+        } else if (result->task == Task::language || result->task == Task::take) {
+            if (!result->error.empty()) {
+                app->say(result->error);
+            } else if (app->cancelled) {
+                app->say(L"Cancelled. The language is as it was.");
+            } else if (app->settings.choose_language_disc(utf8(result->image))) {
+                app->say(describe(*result->language) + L"\nThe image is used where it is, so keep it there.");
+            } else {
+                app->say(app->settings_error());
+            }
+        } else if (!result->error.empty()) {
             // A cancellation can leave an already committed installation.
             // Browsing again or reopening the launcher checks it afresh.
             app->verified = {};
-            SetWindowTextW(app->status, result->error.c_str());
-            SendMessageW(app->progress, PBM_SETPOS, 0, 0);
+            app->say(result->error);
         } else {
             app->verified = std::move(result->disc);
-            SetWindowTextW(app->status, (std::wstring(L"Verified: ") + app->verified.profile->label +
-                L"\nGame data is installed and ready. Select Play game to start.").c_str());
-            if (result->play && !app->cancelled) app->launch();
+            if (!result->language_error.empty()) {
+                app->say(result->language_error + L"\nChoose English or another disc, then select Play game.");
+            } else {
+                app->say(L"Game data is installed and ready. Select Play game to start.");
+                if (result->play && !app->cancelled) app->launch();
+            }
         }
         app->controls();
         return 0;
     }
     case WM_TIMER:
         if (app->game) {
-            DWORD code = STILL_ACTIVE;
-            if (GetExitCodeProcess(app->game, &code) && code != STILL_ACTIVE) {
+            // Asked of the handle and not of the code: a game may exit with 259, which reads as STILL_ACTIVE.
+            if (WaitForSingleObject(app->game, 0) == WAIT_OBJECT_0) {
+                DWORD code = 1;
+                GetExitCodeProcess(app->game, &code);
                 KillTimer(window, 1);
                 CloseHandle(app->game);
                 app->game = nullptr;
-                if (code == 0) SetWindowTextW(app->status, L"Game closed. Select Play game to start again.");
-                else SetWindowTextW(app->status,
-                    L"The game exited with an error. See startup.log and GETTING_STARTED.md.\nIf a runtime DLL is missing, install the Visual C++ x64 Redistributable.");
+                app->settings.load(); // the in-game menu writes the same file
+                if (code == 0) {
+                    app->say(L"Game closed. Select Play game to start again.");
+                } else {
+                    wchar_t heading[160];
+                    swprintf(heading, 160, L"The game exited with an error (code 0x%08lX). If a runtime DLL is missing, "
+                             L"install the Visual C++ x64 Redistributable.", code);
+                    const std::wstring tail = log_tail(app->root / "startup.log", log_lines);
+                    app->say(tail.empty() ? std::wstring(heading) + L"\nSee GETTING_STARTED.md."
+                                          : std::wstring(heading) + L"\nThe end of startup.log:\n" + tail);
+                }
                 app->controls();
+                app->look();
             }
         }
         return 0;
@@ -284,7 +715,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         if (app->busy) {
             app->closing = true;
             app->cancelled = true;
-            SetWindowTextW(app->status, L"Finishing cancellation...");
+            app->say(L"Finishing cancellation...");
             app->controls();
         } else DestroyWindow(window);
         return 0;
@@ -332,11 +763,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         LocalFree(arguments);
         arguments = nullptr;
         if (result >= 0) return result;
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
-        INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_PROGRESS_CLASS};
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // The Language row names the disc and checks it: the game would let this variable replace it unchecked.
+        SetEnvironmentVariableW(L"PSX_DISRUPTOR_LANGUAGE_DISC", nullptr);
+        INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_PROGRESS_CLASS | ICC_TAB_CLASSES | ICC_BAR_CLASSES};
         InitCommonControlsEx(&controls);
-        App app;
-        app.root = executable_directory();
+        App app(executable_directory());
         WNDCLASSW cls{};
         cls.lpfnWndProc = window_proc;
         cls.hInstance = instance;
@@ -346,10 +778,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         cls.lpszClassName = L"DisruptorLauncher";
         if (!RegisterClassW(&cls)) throw std::runtime_error("Cannot create the launcher window.");
         const auto dpi = GetDpiForSystem();
-        RECT bounds{0, 0, MulDiv(620, dpi, 96), MulDiv(442, dpi, 96)};
-        const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-        AdjustWindowRectExForDpi(&bounds, style, FALSE, 0, dpi);
-        HWND window = CreateWindowExW(0, cls.lpszClassName, L"Disruptor Launcher", style,
+        RECT bounds{0, 0, MulDiv(client_width, dpi, 96), MulDiv(client_height, dpi, 96)};
+        const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
+        AdjustWindowRectExForDpi(&bounds, style, FALSE, WS_EX_CONTROLPARENT, dpi);
+        HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, cls.lpszClassName, L"Disruptor Launcher", style,
             CW_USEDEFAULT, CW_USEDEFAULT, bounds.right - bounds.left, bounds.bottom - bounds.top,
             nullptr, nullptr, instance, &app);
         if (!window) throw std::runtime_error("Cannot create the launcher window.");

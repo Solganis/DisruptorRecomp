@@ -181,6 +181,15 @@ extern "C" void disruptor_frame_rate_set_unlocked(int enabled) {
     g_unlocked.store(enabled != 0, std::memory_order_relaxed);
 }
 
+extern "C" int disruptor_frame_rate_cpu_multiplier(void) {
+    return 1 << g_cpu_shift.load(std::memory_order_relaxed);
+}
+
+extern "C" void disruptor_frame_rate_set_cpu_multiplier(int multiplier) {
+    g_cpu_shift.store(shift_for_multiplier(multiplier),
+                      std::memory_order_relaxed);
+}
+
 extern "C" int disruptor_frame_rate_last_window(
         DisruptorFrameRateWindow *out) {
     if (!out) return 0;

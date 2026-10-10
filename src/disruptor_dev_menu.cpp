@@ -11,12 +11,15 @@
 #include "disruptor_billboard_aspect.h"
 #include "disruptor_far_rendering.h"
 #include "disruptor_frame_rate.h"
+#include "disruptor_intro_skip.h"
 #include "disruptor_mouse_aim.h"
 #include "disruptor_present_rate.h"
+#include "disruptor_restart.h"
 #include "config_loader.h"
 #include "gpu.h"
 #include "host_ui.h"
 #include "psx_keybinds.h"
+#include "psx_netplay.h"
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -79,7 +82,9 @@ enum PreferenceDirty : uint32_t {
     PREF_FRAME_UNLOCK      = 1u << 19,
     PREF_SHADOW_SHAPE      = 1u << 20,
     PREF_PRESENT_RATE      = 1u << 21,
+    PREF_SKIP_INTRO        = 1u << 22,
     PREF_PRESENT_ENABLED   = 1u << 23,
+    PREF_LANGUAGE_DISC     = 1u << 24,
 };
 
 struct PreferenceState {
@@ -92,6 +97,7 @@ struct PreferenceState {
 };
 
 PreferenceState g_preferences;
+std::string g_language_disc;
 
 std::string utf8(const fs::path &path) {
     const std::u8string text = path.u8string();
@@ -265,6 +271,19 @@ void mark_audio_muted(bool value) {
     g_preferences.dirty |= PREF_AUDIO_MUTED;
 }
 
+void mark_skip_intro(bool value) {
+    g_preferences.pending.has_skip_intro = true;
+    g_preferences.pending.skip_intro = value;
+    g_preferences.dirty |= PREF_SKIP_INTRO;
+}
+
+void mark_language_disc(const std::string &path) {
+    g_language_disc = path;
+    g_preferences.pending.has_language_disc = true;
+    g_preferences.pending.language_disc = path;
+    g_preferences.dirty |= PREF_LANGUAGE_DISC;
+}
+
 void mark_hud_scale(int value) {
     g_preferences.pending.has_hud_scale = true;
     g_preferences.pending.hud_scale = value;
@@ -359,6 +378,14 @@ void merge_dirty_preferences(PSXRecompV4::UserSettings &settings) {
     if (g_preferences.dirty & PREF_AUDIO_MUTED) {
         settings.has_audio_muted = true;
         settings.audio_muted = pending.audio_muted;
+    }
+    if (g_preferences.dirty & PREF_SKIP_INTRO) {
+        settings.has_skip_intro = true;
+        settings.skip_intro = pending.skip_intro;
+    }
+    if (g_preferences.dirty & PREF_LANGUAGE_DISC) {
+        settings.has_language_disc = true;
+        settings.language_disc = pending.language_disc;
     }
     if (g_preferences.dirty & PREF_HUD_SCALE) {
         settings.has_hud_scale = true;
@@ -480,6 +507,10 @@ void apply_saved_preferences(const PSXRecompV4::UserSettings &settings) {
     if (settings.has_frame_unlock &&
         !env_override_present("PSX_DISRUPTOR_FRAME_UNLOCK"))
         disruptor_frame_rate_set_unlocked(settings.frame_unlock ? 1 : 0);
+    if (settings.has_skip_intro &&
+        !env_override_present("PSX_DISRUPTOR_SKIP_INTRO"))
+        disruptor_intro_skip_set_enabled(settings.skip_intro ? 1 : 0);
+    if (settings.has_language_disc) g_language_disc = settings.language_disc;
     if (settings.has_improved_shadows && !env_override_present("PSX_DISRUPTOR_IMPROVED_SHADOWS"))
         gpu_set_shadow_shape(settings.improved_shadows ? 1 : 0);
 }
@@ -534,6 +565,8 @@ void apply_pending_preferences() {
         gpu_ws_set_hud_scale(pending.hud_scale);
     if (g_preferences.dirty & PREF_FRAME_UNLOCK)
         disruptor_frame_rate_set_unlocked(pending.frame_unlock ? 1 : 0);
+    if (g_preferences.dirty & PREF_SKIP_INTRO)
+        disruptor_intro_skip_set_enabled(pending.skip_intro ? 1 : 0);
     if (g_preferences.dirty & PREF_SHADOW_SHAPE)
         gpu_set_shadow_shape(pending.improved_shadows ? 1 : 0);
 #ifndef PSX_DISABLE_FRAME_INTERPOLATION
@@ -967,6 +1000,15 @@ void draw_enhancements_tab() {
     int present_rate = 0;
     if (disruptor_present_rate_control(&present_rate)) mark_present_rate(present_rate);
 #endif
+
+    ImGui::SeparatorText("Startup");
+    bool skip_intro = disruptor_intro_skip_enabled() != 0;
+    if (ImGui::Checkbox("Skip the logos and the title movie", &skip_intro)) {
+        disruptor_intro_skip_set_enabled(skip_intro ? 1 : 0);
+        mark_skip_intro(skip_intro);
+    }
+    draw_status_badge("LIVE", ImVec4(0.35f, 0.90f, 0.45f, 1.0f));
+    ImGui::TextDisabled("Escape skips the logo or movie on screen.");
 }
 
 const char *cheat_result_message(int result, const char *success) {
@@ -1125,6 +1167,19 @@ void draw_system_tab() {
         "Current vertical pitch, menu layout, "
         "and mouse capture are not saved. Cheat controls start "
         "off each launch.");
+    ImGui::SeparatorText("Language");
+    ImGui::TextWrapped("Disc of another region: %s", g_language_disc.empty() ? "none, the game is in English" : g_language_disc.c_str());
+    if (ImGui::Button("Choose a disc image")) (void)psx_host_pick_disc_image_begin();
+    ImGui::SameLine();
+    if (ImGui::Button("English") && !g_language_disc.empty()) mark_language_disc(std::string());
+    ImGui::SameLine();
+    if (ImGui::Button("Restart now") && !psx_netplay_active() && flush_preferences() && disruptor_restart_arm()) {
+        SDL_Event quit{};
+        quit.type = SDL_QUIT;
+        SDL_PushEvent(&quit);
+    }
+    ImGui::TextDisabled("Movies, speech and words come from that disc at the next start. The French, German and Japanese discs are known.");
+    ImGui::TextDisabled("The Japanese disc gives movies, speech and hints: its menus are in English on the disc itself.");
     ImGui::SeparatorText("Restart required");
     ImGui::BulletText("Renderer backend");
     ImGui::BulletText("Audio backend and buffer configuration");
@@ -1134,6 +1189,8 @@ void draw_system_tab() {
 }
 
 void draw_menu() {
+    char picked[4096];
+    if (psx_host_pick_disc_image_poll(picked, static_cast<int>(sizeof picked)) == 1) mark_language_disc(picked);
     bool keep_open = g_menu.open;
     ImGui::SetNextWindowSize(ImVec2(760.0f, 560.0f),
                              ImGuiCond_FirstUseEver);
@@ -1214,6 +1271,8 @@ int on_sdl_event(void *, const SDL_Event *event) {
         set_menu_open(toggle ? !g_menu.open : false);
         return 1;
     }
+    if (!g_menu.open && scancode_event(event, SDL_SCANCODE_ESCAPE))
+        disruptor_intro_skip_request();
     if (!g_menu.open || !g_menu.imgui_ready) return 0;
     imgui_sdl_process_event(event);
     return 1;

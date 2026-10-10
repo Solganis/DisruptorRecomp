@@ -34,6 +34,7 @@ frustum-capture.json
 frustum-capture-status.txt
 *.log
 *.png
+!docs/images/*.png
 *.zip
 *.7z
 *.exe

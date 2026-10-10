@@ -22,7 +22,9 @@ runtime/include/gpu.h
 +runtime/include/gpu_pinned_corner.h
 runtime/include/gpu_render.h
 runtime/include/gpu_sw_renderer.h
++runtime/include/host_pick_slot.h
 +runtime/include/host_ui.h
++runtime/include/iso_overlay.h
 runtime/include/mod_memory.h
 runtime/include/psx_cyc.h
 runtime/include/overlay_dispatch_preamble.c.inc
@@ -34,6 +36,7 @@ runtime/src/gpu_gl_renderer.c
 +runtime/src/gpu_gl_temporal.c.inc
 runtime/src/gpu_render.c
 runtime/src/gte.cpp
+runtime/src/iso_reader_c.cpp
 runtime/src/main.cpp
 runtime/src/memory.c
 runtime/src/overlay_loader.c

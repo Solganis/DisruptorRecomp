@@ -287,6 +287,20 @@ static const DisruptorBackdropTileSite *disruptor_sprite_depth_site(
     return nullptr;
 }
 
+static const DisruptorBackdropTileSite kDisruptorIntroSkipSites[] = {
+    {0x800147B0u, 0x2A820003u},
+    {0x80020A80u, 0x2A02005Eu},
+    {0x80048678u, 0x30420940u},
+};
+
+static const DisruptorBackdropTileSite *disruptor_intro_skip_site(
+        uint32_t address) {
+    for (const DisruptorBackdropTileSite &site : kDisruptorIntroSkipSites) {
+        if (site.pc == address) return &site;
+    }
+    return nullptr;
+}
+
 static const DisruptorBackdropTileSite *disruptor_backdrop_tile_site(
         uint32_t address) {
     for (const DisruptorBackdropTileSite &site : kDisruptorBackdropTileSites) {
@@ -1150,6 +1164,17 @@ std::string CodeGenerator::translate_instruction(uint32_t addr, uint32_t instr) 
                 addr, sprite_depth_site->instruction, instr));
         }
         sprite_depth_site = nullptr;
+    }
+    const DisruptorBackdropTileSite *intro_skip_site =
+        disruptor_intro_skip_site(addr);
+    if (intro_skip_site && instr != intro_skip_site->instruction) {
+        if (!config_.overlay_mode) {
+            throw std::runtime_error(fmt::format(
+                "Disruptor intro-skip site 0x{:08X} expected word "
+                "0x{:08X}, found 0x{:08X}",
+                addr, intro_skip_site->instruction, instr));
+        }
+        intro_skip_site = nullptr;
     }
 
     // Full-word-guarded terrain-frustum half-angle constants. Scaling the
@@ -2234,6 +2259,12 @@ std::string CodeGenerator::translate_instruction(uint32_t addr, uint32_t instr) 
     if (sprite_depth_site) {
         code += fmt::format(
             "\n{}disruptor_sprite_depth_instruction_hook(cpu, "
+            "0x{:08X}u, 0x{:08X}u, 1);",
+            config_.indent, addr, instr);
+    }
+    if (intro_skip_site) {
+        code += fmt::format(
+            "\n{}disruptor_intro_skip_instruction_hook(cpu, "
             "0x{:08X}u, 0x{:08X}u, 1);",
             config_.indent, addr, instr);
     }
@@ -3635,6 +3666,7 @@ void CodeGenerator::emit_runtime_externs(std::ostream& ss) const {
     ss << "extern void disruptor_billboard_aspect_instruction_hook(CPUState* cpu, uint32_t address, uint32_t instruction, int phase);  /* version-pinned world-billboard seam */\n";
     ss << "extern void disruptor_backdrop_tiles_instruction_hook(CPUState* cpu, uint32_t address, uint32_t instruction, int phase);  /* version-pinned backdrop-tile seam */\n";
     ss << "extern void disruptor_sprite_depth_instruction_hook(CPUState* cpu, uint32_t address, uint32_t instruction, int phase);  /* version-pinned sprite-depth seam */\n";
+    ss << "extern void disruptor_intro_skip_instruction_hook(CPUState* cpu, uint32_t address, uint32_t instruction, int phase);  /* version-pinned intro-skip seam */\n";
     ss << "extern void psx_datashard_ret(CPUState* cpu);                  /* data-shard capture finalize */\n";
     ss << "extern int  psx_vsync_query_hle_enter(CPUState* cpu, uint32_t func, uint32_t counter_addr, uint32_t gpustat_ptr_addr, uint32_t timer1_ptr_addr, uint32_t timer1_cache_addr);  /* load_accel.c */\n";
     ss << "extern void psx_ws_sprite_tag(CPUState* cpu);  /* widescreen prim tag (gpu.c) */\n";
