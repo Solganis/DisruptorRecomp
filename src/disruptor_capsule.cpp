@@ -327,7 +327,10 @@ void replay_frame() {
     if (++capsule.at == capsule.replayed.size()) finish_replay();
     sio_set_pad_state_slot(0, frame.pad[0]);
     sio_set_pad_state_slot(1, frame.pad[1]);
-    if (frame.byte_at != 0u) psx_write_byte(frame.byte_at, frame.byte);
+    if (frame.byte_at != 0u) {
+        psx_write_byte(frame.byte_at, frame.byte);
+        disruptor_capsule_note_byte(frame.byte_at, frame.byte);  /* a recording made inside a replay holds the byte too */
+    }
     disruptor_mouse_set_vertical_pitch(static_cast<double>(frame.pitch));
 }
 

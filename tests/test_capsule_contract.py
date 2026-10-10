@@ -89,9 +89,11 @@ require(
     replay.index("capsule.seen.push_back(memory_now());") < replay.index("    sio_set_pad_state_slot(0, frame.pad[0]);")
     and replay.index("if (++capsule.at == capsule.replayed.size()) finish_replay();")
     < replay.index("    sio_set_pad_state_slot(0, frame.pad[0]);")
-    and "    if (frame.byte_at != 0u) psx_write_byte(frame.byte_at, frame.byte);\n" in replay
+    and "        psx_write_byte(frame.byte_at, frame.byte);\n        disruptor_capsule_note_byte(frame.byte_at, frame.byte);"
+    in replay
     and "    disruptor_mouse_set_vertical_pitch(static_cast<double>(frame.pitch));\n" in replay,
-    "a replay compares the memory before it puts a frame's input in, and puts in all a frame holds",
+    "a replay compares the memory before it puts a frame's input in, puts in all a frame holds, "
+    "and notes the byte it writes for a capsule recorded inside it",
 )
 require(
     "    const bool in_step = capsule.same != 0 && capsule.last_same + kInStep >= capsule.replayed.size();\n" in capsule

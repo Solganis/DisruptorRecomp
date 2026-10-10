@@ -130,13 +130,14 @@ python tools/replay_capsule.py capsules/1791553413 --pictures out
 This plays the capsule back without a window or sound, writes each frame as a
 PNG and exits with 0 when the replay stayed in step with the recording. A
 replay is the same run every time. It is not the recorded run bit for bit: a
-loaded state takes its interrupts a few instructions apart, so about one frame
-in four differs from the recording in a few bytes of the game's memory, nine
-frames in a row at the most in the runs measured. A replay counts as in step
-when it has the recording's memory at some frame of its last 60.
+loaded state takes its interrupts a few instructions apart, so some frames
+differ from the recording in a few bytes of the game's memory, from one in ten
+to seven in ten in the runs measured. A replay counts as in step when it has the
+recording's memory at some frame of its last 60.
 
 A capsule holds the pad buttons, the heading the mouse wrote and the pitch of
 the vertical look. It does not hold analog sticks, cheats or anything changed
 in the settings menu while it was recorded. It plays in the build that made
-it, and it is not recorded in a network game. The pictures are of the 4:3
-software frame: the widescreen and in-between frames need a window.
+it and with the settings it was made with, and it is not recorded in a network
+game. The pictures are of the software frame, which a wide aspect squashes:
+the stretched and in-between frames need a window.
