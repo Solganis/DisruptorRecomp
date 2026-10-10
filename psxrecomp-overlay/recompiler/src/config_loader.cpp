@@ -2505,8 +2505,24 @@ fs::path user_settings_temp_path(const fs::path& destination) {
 bool atomic_replace_user_settings(const fs::path& temporary,
                                   const fs::path& destination) {
 #ifdef _WIN32
-    return ::MoveFileExW(temporary.c_str(), destination.c_str(),
-                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    // A reader or antivirus scanner may briefly deny replacement after a save.
+    // Keep the old file intact and allow up to 500 ms for that handle to close.
+    for (unsigned attempt = 0; ; ++attempt) {
+        if (::MoveFileExW(temporary.c_str(), destination.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+        const DWORD error = ::GetLastError();
+        const bool transient = error == ERROR_ACCESS_DENIED ||
+                               error == ERROR_SHARING_VIOLATION ||
+                               error == ERROR_LOCK_VIOLATION;
+        const DWORD attributes = ::GetFileAttributesW(destination.c_str());
+        const bool blocked = attributes != INVALID_FILE_ATTRIBUTES &&
+                             (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY));
+        if (!transient || blocked || attempt == 20) {
+            ::SetLastError(error);
+            return false;
+        }
+        ::Sleep(25);
+    }
 #else
     return std::rename(temporary.c_str(), destination.c_str()) == 0;
 #endif
@@ -2731,7 +2747,13 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
         return false;
     }
     if (!atomic_replace_user_settings(temporary, path)) {
+#ifdef _WIN32
+        const DWORD error = ::GetLastError();
+#endif
         remove_user_settings_temp(temporary);
+#ifdef _WIN32
+        ::SetLastError(error);
+#endif
         return false;
     }
     return true;

@@ -64,6 +64,7 @@ folder; these backups can be removed manually once the repaired copy works.
 | Map / pause | Tab / P |
 | Settings | Backquote (`` ` ``); Escape closes |
 | Fullscreen | Alt+Enter |
+| Skip a logo or movie | Escape |
 | Fast-forward | Hold ] |
 | Save / load state | Shift+F1–F12 / F1–F12 |
 
@@ -77,6 +78,10 @@ frames. Both frame options start off; in-between frames need exact geometry.
 The **Shadows** setting offers Vanilla and Improved shapes when geometry
 correction is enabled. HUD size ranges from 50% to 100% in widescreen and
 leaves the weapon size unchanged.
+
+**Skip the logos and the title movie** in Enhancements skips the boot intro
+automatically. It starts off; the other movies still play normally. Escape
+can skip the logo or movie currently on screen when the settings menu is closed.
 
 The default is 4x at 4:3; lower the scale if performance is poor. Menus and
 movies remain at 4:3. Controls, display, and audio preferences are saved in
@@ -114,7 +119,8 @@ depend on the language.
 Use the game's memory-card save system for long-term progress. Memory cards and
 save states are stored in `saves/`; back up that folder before installing a new
 release. Save states are specific to their build and may not load after an
-update. **Save states from v0.1.0-alpha.1 are incompatible with this release.**
+update. **Save states from v0.1.0-alpha.1 and alpha.2 are incompatible with
+v0.1.0-alpha.3.**
 Use a memory-card save or start a new game, then create new save states.
 The original password system is also available in the game.
 

@@ -1,6 +1,6 @@
 # Project status
 
-Last verified: **8 October 2026**. The project is in development; full campaign
+Last verified: **10 October 2026**. The project is in development; full campaign
 and public-release validation are incomplete.
 
 | Area | Current state |
@@ -12,9 +12,11 @@ and public-release validation are incomplete.
 | Settings | Controls, Enhancements, Cheats, and System tabs; supported preferences persist between runs. |
 | Interpolation and diagnostics | In-between frames are experimental and off until switched on in Settings. The Diagnostics tab and experimental debug controls are removed. |
 | Ultrawide corruption | Fixed primitive-buffer overflow. The user's 8x / 32:9 training retest stayed correct through 8,934 frames and closed normally. |
-| Save states | Save states require a matching build. The alpha.2 code-generation changes make alpha.1 save states incompatible; use memory-card saves for progress across releases. |
-| Automated checks | Windows Release build and all 37 root CTests passed. |
+| Save states | Save states require a matching build and language. The alpha.3 code-generation changes make alpha.1 and alpha.2 states incompatible; use memory-card saves for progress across releases. |
+| Automated checks | Windows Release build, code-generation audit, and all 59 root CTests passed. |
 | Player package | Windows x64 alpha includes the launcher, OpenBIOS, setup guide, and dependency licenses; players supply their supported BIN/CUE. |
+| Launcher and languages | Disc import and verification, saved settings, presets, and optional French/German/Japanese content from a second owned disc. USA remains the required game disc. |
+| Intro and widescreen fixes | Optional intro skipping, complete widescreen map and selection lists, reduced movie-edge noise, and near-wall hole fixes. |
 
 ## Remaining limits
 

@@ -128,8 +128,14 @@ void whole_range(const fs::path& folder) {
         for (int value = one.lowest; value <= highest; value += step) {
             SettingsFile again(file);
             again.set_display_rate(1000.0);
-            require(settings.set(one, value) && again.load() && again.shown(one) == value,
-                    "the game's reader must take every value the launcher can write");
+            const bool saved = settings.set(one, value);
+            const DWORD save_error = GetLastError();
+            const bool loaded = again.load();
+            if (!saved || !loaded || again.shown(one) != value)
+                throw std::runtime_error(std::string("settings round-trip failed for ") + one.key +
+                    "=" + std::to_string(value) + ": saved=" + std::to_string(saved) +
+                    ", loaded=" + std::to_string(loaded) + ", actual=" + std::to_string(again.shown(one)) +
+                    ", Windows error=" + std::to_string(save_error));
         }
     }
     fs::remove(file);

@@ -24,22 +24,22 @@ disc revision; the redistributable OpenBIOS backend is used for booting.
 - Memory-card saves and twelve save-state slots.
 - Windows launcher with disc-image browsing, automatic copy/CUE setup,
   full-disc SHA-256 verification, the game's settings, and game launch.
+- Optional French, German, and Japanese game content from an additional disc
+  image you own; the supported USA disc remains required.
+- Optional intro skipping and a key to skip a logo or movie.
 
 ## Play the Windows alpha
 
-[Download v0.1.0-alpha.2](https://github.com/micmea668/DisruptorRecomp/releases/tag/v0.1.0-alpha.2),
-extract the Windows ZIP, add your supported USA BIN/CUE to its `input/` folder,
-and double-click **Play Disruptor.cmd**. OpenBIOS is included; no build tools are
-needed. See the [getting-started guide](docs/PLAYING.md) for prerequisites,
+[Download v0.1.0-alpha.3](https://github.com/micmea668/DisruptorRecomp/releases/tag/v0.1.0-alpha.3),
+extract the Windows ZIP, and open **DisruptorLauncher.exe**. Browse to your
+supported USA disc image; the launcher installs, verifies, and starts the game.
+OpenBIOS is included; no build tools are needed. See the [getting-started guide](docs/PLAYING.md) for prerequisites,
 controls, saves, and troubleshooting.
 
-New builds include **DisruptorLauncher.exe**: browse to your own supported
-USA CUE/BIN (or an identical raw ISO/IMG), and it installs, verifies, and starts
-the game. Your original dump is kept. The launcher also holds the game's
-settings, and it can take the game's language from a French, German or
-Japanese disc image that you add. This launcher is not included in the
-already published alpha.2 ZIP. Cooked ISOs are not supported, and a PAL or
-Japanese disc cannot be the game disc itself.
+The launcher accepts USA CUE/BIN (or an identical raw ISO/IMG) and keeps your
+original dump. It also holds the game's settings and can take the game's
+language from a French, German or Japanese disc image that you add. Cooked
+ISOs are not supported, and a PAL or Japanese disc cannot be the game disc itself.
 
 <img width="680" alt="Disruptor Launcher" src="docs/images/launcher.png" />
 

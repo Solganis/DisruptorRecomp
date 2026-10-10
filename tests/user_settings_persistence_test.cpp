@@ -6,6 +6,17 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 using PSXRecompV4::UserSettings;
@@ -160,6 +171,38 @@ int main() {
                     replaced.has_audio_muted && replaced.audio_muted,
                 "replacement did not preserve the merged settings");
         require(!has_temp_sibling(root), "replacement leaked a temp file");
+
+#ifdef _WIN32
+        // Simulate a scanner/reader that temporarily prevents atomic replacement.
+        HANDLE reader = ::CreateFileW(path.c_str(), GENERIC_READ,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        require(reader != INVALID_HANDLE_VALUE, "could not hold settings open");
+        std::thread release_reader([reader] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(75));
+            ::CloseHandle(reader);
+        });
+        replaced.mouse_aim = true;
+        const bool recovered = PSXRecompV4::save_user_settings(path, replaced);
+        release_reader.join();
+        require(recovered, "save did not recover after a temporary replacement lock");
+        require(PSXRecompV4::load_user_settings(path).mouse_aim,
+                "recovered save did not publish the new settings");
+        require(!has_temp_sibling(root), "recovered save leaked a temp file");
+
+        // A lock that outlasts the retry budget must report failure and retain data.
+        reader = ::CreateFileW(path.c_str(), GENERIC_READ,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        require(reader != INVALID_HANDLE_VALUE, "could not hold settings open again");
+        replaced.mouse_aim = false;
+        const bool blocked_save = PSXRecompV4::save_user_settings(path, replaced);
+        ::CloseHandle(reader);
+        require(!blocked_save, "save unexpectedly replaced a persistently locked file");
+        require(PSXRecompV4::load_user_settings(path).mouse_aim,
+                "failed save damaged the previous settings");
+        require(!has_temp_sibling(root), "locked save leaked a temp file");
+#endif
 
         const fs::path scale_path = root / "internal-scale.toml";
         for (int scale = 1; scale <= 8; ++scale) {
