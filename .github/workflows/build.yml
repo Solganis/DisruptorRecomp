@@ -17,12 +17,11 @@ env:
   # No runner has the game: every source is compiled, the runtime is not
   # linked, and the tests that read no retail data run. See build.sh.
   DISRUPTOR_WITHOUT_GAME: "1"
-  # CMake takes its compiler launcher from the environment, so build.sh names no cache.
-  CMAKE_C_COMPILER_LAUNCHER: ccache
-  CMAKE_CXX_COMPILER_LAUNCHER: ccache
-  # SDL builds with a precompiled header, which ccache keeps only under pch_defines and time_macros.
+  DISRUPTOR_COMPILER_LAUNCHER: ccache
+  # SDL's precompiled header is kept only under pch_defines and time_macros, and rebuilt on every run unless MSYS2's cc.exe is named a GCC.
   CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
-  CCACHE_MAXSIZE: 500M
+  CCACHE_COMPILERTYPE: gcc
+  CCACHE_MAXSIZE: 200M
 
 jobs:
   linux:
