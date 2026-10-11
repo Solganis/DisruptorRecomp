@@ -93,8 +93,8 @@ if [ -n "$WITHOUT_GAME" ]; then
     exit 0
 fi
 
-# shellcheck disable=SC2086
 BUILD="${DISRUPTOR_BUILD_DIRECTORY:-build}"
+# shellcheck disable=SC2086
 cmake -S . -B "$BUILD" $GENERATOR $LAUNCHER -DCMAKE_BUILD_TYPE=Release \
     -DPSX_RECOMP_UI=OFF -DPSX_ENABLE_VULKAN=OFF
 cmake --build "$BUILD" --parallel
