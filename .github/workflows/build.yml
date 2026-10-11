@@ -18,9 +18,8 @@ env:
   # linked, and the tests that read no retail data run. See build.sh.
   DISRUPTOR_WITHOUT_GAME: "1"
   DISRUPTOR_COMPILER_LAUNCHER: ccache
-  # SDL's precompiled header is kept only under pch_defines and time_macros, and rebuilt on every run unless MSYS2's cc.exe is named a GCC.
-  CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
-  CCACHE_COMPILERTYPE: gcc
+  # ccache keeps SDL's precompiled header, and the 260 to 320 files behind it, only under these two.
+  CCACHE_SLOPPINESS: pch_defines,time_macros
   CCACHE_MAXSIZE: 200M
 
 jobs:
@@ -49,12 +48,10 @@ jobs:
       - name: Build and test without the game
         env:
           CCACHE_DIR: ${{ runner.temp }}/ccache
-          CCACHE_LOGFILE: ${{ runner.temp }}/ccache.log
         run: |
           ccache --zero-stats
           ./build.sh
-          ccache --show-stats --verbose
-          cat "$CCACHE_LOGFILE"
+          ccache --show-stats
 
   mingw:
     name: Windows, MinGW-w64
@@ -84,9 +81,9 @@ jobs:
       - name: Build and test without the game
         env:
           CCACHE_DIR: ${{ runner.temp }}/ccache
-          CCACHE_LOGFILE: ${{ runner.temp }}/ccache.log
+          # MSYS2's cc.exe is no name ccache knows: unnamed, it rebuilt the precompiled header on every run.
+          CCACHE_COMPILERTYPE: gcc
         run: |
           ccache --zero-stats
           ./build.sh
-          ccache --show-stats --verbose
-          cat "$(cygpath "$CCACHE_LOGFILE")"
+          ccache --show-stats
