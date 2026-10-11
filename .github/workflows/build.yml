@@ -50,10 +50,12 @@ jobs:
       - name: Build and test without the game
         env:
           CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_LOGFILE: ${{ runner.temp }}/ccache.log
         run: |
           ccache --zero-stats
           ./build.sh
           ccache --show-stats --verbose
+          cat "$CCACHE_LOGFILE"
 
   mingw:
     name: Windows, MinGW-w64
@@ -83,7 +85,9 @@ jobs:
       - name: Build and test without the game
         env:
           CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_LOGFILE: ${{ runner.temp }}/ccache.log
         run: |
           ccache --zero-stats
           ./build.sh
           ccache --show-stats --verbose
+          cat "$(cygpath "$CCACHE_LOGFILE")"
