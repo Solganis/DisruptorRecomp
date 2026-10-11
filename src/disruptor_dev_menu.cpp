@@ -1447,6 +1447,7 @@ void draw_menu() {
                              ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Disruptor Settings", &keep_open,
                      ImGuiWindowFlags_NoCollapse)) {
+        ImGui::PushTextWrapPos(0.0f);  // a long note wraps at the window's edge, where it used to be cut off
         ImGui::TextDisabled("Press ` to toggle; Escape closes the menu.");
         ImGui::TextColored(ImVec4(1.0f, 0.73f, 0.25f, 1.0f),
                            "The game is not paused while this menu is open.");
@@ -1482,6 +1483,7 @@ void draw_menu() {
             }
             ImGui::EndTabBar();
         }
+        ImGui::PopTextWrapPos();
     }
     ImGui::End();
     if (!keep_open && g_menu.open) set_menu_open(false);
